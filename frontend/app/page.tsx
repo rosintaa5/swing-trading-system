@@ -8,56 +8,140 @@ export default function Page() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    socket.on("connect", () => setConnected(true));
-    socket.on("swing", setData);
+    if (!socket) return;
 
-    return () => socket.off();
+    // ======================
+    // HANDLERS (WAJIB NAMED)
+    // ======================
+    const onConnect = () => {
+      setConnected(true);
+      console.log("socket connected");
+    };
+
+    const onDisconnect = () => {
+      setConnected(false);
+    };
+
+    const onSwing = (res: any) => {
+      setData(res);
+    };
+
+    // ======================
+    // REGISTER EVENTS
+    // ======================
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("swing", onSwing);
+
+    // ======================
+    // CLEANUP (FIX ERROR KAMU)
+    // ======================
+    return (): void => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("swing", onSwing);
+    };
   }, []);
 
   return (
-    <div style={{ background: "#070b14", minHeight: "100vh", padding: 20, color: "#fff" }}>
+    <div style={{
+      background: "#050816",
+      minHeight: "100vh",
+      color: "#fff",
+      fontFamily: "Inter, sans-serif",
+      padding: 24
+    }}>
 
       {/* HEADER */}
-      <h2>📊 AI TRADING TERMINAL PRO</h2>
-      <p>Status: {connected ? "🟢 LIVE" : "🔴 OFFLINE"}</p>
+      <div style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center"
+      }}>
+        <h2>⚡ AI TRADING TERMINAL V5</h2>
+
+        <div style={{
+          padding: "6px 12px",
+          borderRadius: 20,
+          background: connected ? "#16a34a" : "#dc2626",
+          fontSize: 12
+        }}>
+          {connected ? "LIVE" : "OFFLINE"}
+        </div>
+      </div>
 
       {/* BTC PANEL */}
-      <div style={{ background: "#111827", padding: 15, borderRadius: 10 }}>
-        <h3>BTC PRICE</h3>
-        <h1>{data?.btc}</h1>
-        <p>BTC Change: {data?.btcChange}%</p>
+      <div style={{
+        marginTop: 20,
+        padding: 16,
+        borderRadius: 12,
+        background: "#0f172a",
+        border: "1px solid #1f2937"
+      }}>
+        <h3>₿ BTC MARKET</h3>
+        <h1>{data?.btc ?? "-"}</h1>
+        <p>Change: {data?.btcChange ?? 0}%</p>
+        <p>Regime: {data?.regime ?? "UNKNOWN"}</p>
       </div>
 
       {/* NEWS */}
-      <h3 style={{ marginTop: 20 }}>📰 NEWS</h3>
-      {data?.news?.map((n: any, i: number) => (
-        <div key={i} style={{ padding: 10, background: "#1f2937", marginTop: 5 }}>
-          {n.title} ({n.impact})
-        </div>
-      ))}
+      <h3 style={{ marginTop: 20 }}>📰 MARKET NEWS</h3>
 
-      {/* TOP 5 COINS */}
-      <h3 style={{ marginTop: 20 }}>🔥 TOP 5 COINS</h3>
+      <div style={{ display: "grid", gap: 10 }}>
+        {data?.news?.map((n: any, i: number) => (
+          <div
+            key={i}
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              background: "#111827",
+              border: "1px solid #1f2937"
+            }}
+          >
+            <b>{n.title}</b>
+            <div style={{ fontSize: 12, opacity: 0.7 }}>
+              Impact: {n.impact}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* TOP COINS */}
+      <h3 style={{ marginTop: 25 }}>🔥 TOP SIGNALS (AI RANKING)</h3>
 
       {data?.coins?.map((c: any, i: number) => (
         <div
           key={i}
           style={{
-            marginTop: 10,
-            padding: 15,
-            borderRadius: 10,
+            marginTop: 12,
+            padding: 14,
+            borderRadius: 12,
             background:
               c.signal === "BUY"
-                ? "#14532d"
+                ? "#052e16"
                 : c.signal === "SELL"
                 ? "#3f0a0a"
-                : "#1f2937"
+                : "#111827",
+            border: "1px solid #1f2937"
           }}
         >
+
           {/* HEADER */}
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between"
+          }}>
             <b>{i + 1}. {c.pair}</b>
-            <span>Accuracy: {c.accuracy}%</span>
+            <span style={{
+              color:
+                c.accuracy > 80
+                  ? "#22c55e"
+                  : c.accuracy > 60
+                  ? "#facc15"
+                  : "#ef4444"
+            }}>
+              {c.accuracy}% ACC
+            </span>
           </div>
 
           {/* PRICE */}
@@ -65,7 +149,7 @@ export default function Page() {
           <div>📉 Buy: {c.buy} | 📈 Sell: {c.sell}</div>
 
           {/* SIGNAL */}
-          <div>
+          <div style={{ marginTop: 6 }}>
             Signal: <b>{c.signal}</b> ({c.prediction})
           </div>
 
@@ -75,6 +159,7 @@ export default function Page() {
           </div>
         </div>
       ))}
+
     </div>
   );
 }
