@@ -10,8 +10,10 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*"
-  }
+    origin: "*",
+    methods: ["GET", "POST"]
+  },
+  transports: ["websocket", "polling"]
 });
 
 io.on("connection", (socket) => {
@@ -20,14 +22,11 @@ io.on("connection", (socket) => {
   socket.emit("swing", {
     btc: 65000,
     coins: [
-      { pair: "BTC/IDR", price: 1000000, signal: "BUY" },
-      { pair: "ETH/IDR", price: 50000, signal: "SELL" }
+      { pair: "BTC/USDT", price: 65000, signal: "HOLD" }
     ]
   });
 });
 
-const PORT = process.env.PORT || 3000;
-
-server.listen(PORT, () => {
-  console.log("server running on", PORT);
+server.listen(process.env.PORT || 3000, () => {
+  console.log("server running");
 });
