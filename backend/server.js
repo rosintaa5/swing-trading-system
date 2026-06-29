@@ -15,120 +15,117 @@ const io = new Server(server, {
 });
 
 // =========================
-// FETCH MARKET DATA
+// INDODAX API LAYER
 // =========================
+const BASE = "https://indodax.com/api";
+
 async function getTickers() {
-  const res = await axios.get("https://indodax.com/api/tickers");
-  return res.data.tickers;
+  return (await axios.get(`${BASE}/tickers`)).data.tickers;
+}
+
+async function getSummaries() {
+  return (await axios.get(`${BASE}/summaries`)).data.tickers;
 }
 
 // =========================
-// BTC MARKET REGIME
+// ADVANCED MARKET ANALYSIS
 // =========================
-function getMarketRegime(btcChange) {
-  if (btcChange > 2) return "BULLISH";
-  if (btcChange < -2) return "BEARISH";
-  return "SIDEWAYS";
-}
-
-// =========================
-// AI V3 PREDICTION ENGINE
-// =========================
-function predictProbability(ticker, btcChange) {
-  const change = parseFloat(ticker.change || 0);
-  const high = parseFloat(ticker.high || ticker.last);
-  const low = parseFloat(ticker.low || ticker.last);
+function computeScore(t, btcChange) {
+  const change = parseFloat(t.change || 0);
+  const high = parseFloat(t.high || t.last);
+  const low = parseFloat(t.low || t.last);
+  const last = parseFloat(t.last);
 
   const volatility = ((high - low) / low) * 100;
 
-  const trendMomentum = change;
-  const breakoutPower = volatility * 0.7;
-  const meanReversion = -change * 0.4;
+  // liquidity proxy
+  const liquidityScore = volatility * 0.4;
 
-  const btcInfluence = btcChange * 0.9;
+  // momentum
+  const momentum = change * 1.3;
 
-  // FINAL PROBABILITY SCORE (-100 to +100)
-  const rawScore =
-    (trendMomentum * 1.5) +
-    (breakoutPower * 0.8) +
-    (meanReversion) +
-    (btcInfluence);
+  // BTC influence
+  const btcImpact = btcChange * 0.9;
 
-  return Math.max(-100, Math.min(100, rawScore));
+  // trend strength
+  const trend = Math.tanh(change) * 10;
+
+  // FINAL SCORE
+  return (
+    momentum +
+    liquidityScore +
+    btcImpact +
+    trend
+  );
 }
 
 // =========================
-// SIGNAL ENGINE V3
+// SIGNAL ENGINE
 // =========================
-function getSignalV3(score) {
-  if (score >= 60) return "🔥 STRONG BUY";
-  if (score >= 25) return "BUY";
-  if (score <= -60) return "🚨 STRONG SELL";
-  if (score <= -25) return "SELL";
+function signal(score) {
+  if (score > 8) return "🔥 STRONG BUY";
+  if (score > 3) return "BUY";
+  if (score < -8) return "🚨 STRONG SELL";
+  if (score < -3) return "SELL";
   return "NEUTRAL";
 }
 
 // =========================
-// CONFIDENCE LEVEL
-// =========================
-function getConfidence(score) {
-  return Math.min(100, Math.abs(score)).toFixed(0);
-}
-
-// =========================
-// SOCKET ENGINE
+// SOCKET STREAM
 // =========================
 io.on("connection", (socket) => {
-  console.log("client connected:", socket.id);
+  console.log("client connected");
 
-  const sendData = async () => {
+  const stream = async () => {
     try {
       const tickers = await getTickers();
+      const summaries = await getSummaries();
 
-      const btcChange = parseFloat(tickers.btc_idr?.change || 0);
-      const regime = getMarketRegime(btcChange);
+      const btc = tickers.btc_idr;
+      const btcChange = parseFloat(btc?.change || 0);
 
       const coins = Object.keys(tickers)
-        .slice(0, 25)
+        .slice(0, 30)
         .map((key) => {
           const t = tickers[key];
 
-          const score = predictProbability(t, btcChange);
+          const score = computeScore(t, btcChange);
+
+          const summary = summaries[key];
 
           return {
             pair: key.toUpperCase(),
             price: parseFloat(t.last),
+            high: parseFloat(t.high),
+            low: parseFloat(t.low),
             change: parseFloat(t.change),
-            probability: Number(score.toFixed(2)),
-            confidence: getConfidence(score),
-            signal: getSignalV3(score),
-            regime
+            volume: summary?.vol_idr || 0,
+            score: Number(score.toFixed(2)),
+            signal: signal(score)
           };
         })
-        .sort((a, b) => Math.abs(b.probability) - Math.abs(a.probability));
+        .sort((a, b) => b.score - a.score);
 
       socket.emit("swing", {
-        btc: tickers.btc_idr?.last,
+        btc: btc?.last,
         btcChange,
-        regime,
+        marketCap: "INDODAX",
         coins
       });
 
-    } catch (err) {
-      console.log(err.message);
+    } catch (e) {
+      console.log(e.message);
     }
   };
 
-  sendData();
-  const interval = setInterval(sendData, 4000);
+  stream();
+  const interval = setInterval(stream, 4000);
 
   socket.on("disconnect", () => clearInterval(interval));
 });
 
 app.get("/", (req, res) => {
-  res.send("AI Swing V3 Prediction Engine Running");
+  res.send("INDODAX PRO TRADING ENGINE ACTIVE");
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("server running");
-});
+server.listen(process.env.PORT || 3000);
