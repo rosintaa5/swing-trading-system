@@ -1,49 +1,79 @@
-export default function Home() {
+"use client";
+
+import { useEffect, useState } from "react";
+import { socket } from "@/lib/socket";
+
+export default function Page() {
+  const [data, setData] = useState<any>(null);
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    socket.on("connect", () => {
+      console.log("socket connected");
+      setConnected(true);
+    });
+
+    socket.on("swing", (res) => {
+      console.log("DATA RECEIVED:", res);
+      setData(res);
+    });
+
+    socket.on("disconnect", () => {
+      setConnected(false);
+    });
+
+    return () => {
+      socket.off("connect");
+      socket.off("swing");
+      socket.off("disconnect");
+    };
+  }, []);
+
   return (
-    <div
-      style={{
-        padding: 30,
-        fontFamily: "Arial",
-        background: "#0b0f1a",
-        color: "#fff",
-        minHeight: "100vh"
-      }}
-    >
-      <h1 style={{ fontSize: 28 }}>📊 Swing Trading System</h1>
+    <div style={{ padding: 20 }}>
+      <h2>SWING DASHBOARD</h2>
 
-      <p style={{ marginTop: 10, color: "#9ca3af" }}>
-        Real-time crypto signal engine (Indodax + BTC correlation)
+      <p>
+        Status:{" "}
+        <b style={{ color: connected ? "green" : "red" }}>
+          {connected ? "CONNECTED" : "DISCONNECTED"}
+        </b>
       </p>
 
-      <div
-        style={{
-          marginTop: 20,
-          padding: 15,
-          background: "#111827",
-          borderRadius: 10,
-          border: "1px solid #1f2937"
-        }}
-      >
-        <h3>⚡ Status System</h3>
-        <ul>
-          <li>✔ Backend Railway Connected</li>
-          <li>✔ Indodax API Active</li>
-          <li>✔ Signal Engine Running</li>
-        </ul>
-      </div>
+      <p>BTC: {data?.btc ?? "-"}</p>
 
-      <div style={{ marginTop: 20 }}>
-        <h3>🚀 Features</h3>
-        <ul style={{ color: "#d1d5db" }}>
-          <li>Real-time BUY / SELL signal</li>
-          <li>BTC influence tracking</li>
-          <li>1–3 day swing prediction</li>
-        </ul>
+      <div>
+        {data?.coins?.map((c: any, i: number) => (
+          <div
+            key={i}
+            style={{
+              border: "1px solid #ccc",
+              margin: 10,
+              padding: 10
+            }}
+          >
+            <b>{c.pair}</b>
+            <br />
+            PRICE: {c.price}
+            <br />
+            CHANGE: {c.change}
+            <br />
+            SIGNAL:{" "}
+            <span
+              style={{
+                color:
+                  c.signal?.includes("BUY")
+                    ? "green"
+                    : c.signal?.includes("SELL")
+                    ? "red"
+                    : "orange"
+              }}
+            >
+              {c.signal}
+            </span>
+          </div>
+        ))}
       </div>
-
-      <p style={{ marginTop: 30, color: "#6b7280" }}>
-        System ready for deployment 🚀
-      </p>
     </div>
   );
 }
