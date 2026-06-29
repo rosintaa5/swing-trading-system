@@ -8,80 +8,96 @@ export default function Page() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    socket.on("connect", () => setConnected(true));
-    socket.on("swing", setData);
+    if (!socket) return;
 
-    return () => socket.off();
+    // handler harus named biar bisa di-off
+    const onConnect = () => {
+      console.log("socket connected");
+      setConnected(true);
+    };
+
+    const onDisconnect = () => {
+      setConnected(false);
+    };
+
+    const onSwing = (res: any) => {
+      console.log("DATA RECEIVED:", res);
+
+      setData({
+        btc: res?.btc ?? "-",
+        btcChange: res?.btcChange ?? 0,
+        regime: res?.regime ?? "UNKNOWN",
+        coins: Array.isArray(res?.coins) ? res.coins : []
+      });
+    };
+
+    // register event
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+    socket.on("swing", onSwing);
+
+    // CLEANUP WAJIB VOID (INI FIX ERROR KAMU)
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+      socket.off("swing", onSwing);
+    };
   }, []);
 
   return (
-    <div style={{
-      background: "#05070f",
-      minHeight: "100vh",
-      color: "#fff",
-      fontFamily: "monospace",
-      padding: 20
-    }}>
+    <div style={{ padding: 20, background: "#0a0f1c", minHeight: "100vh", color: "#fff" }}>
+      
+      <h2>🚀 AI SWING SYSTEM</h2>
 
-      {/* HEADER */}
-      <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <h2>📊 INDODAX PRO TERMINAL</h2>
-        <span style={{ color: connected ? "#00ff88" : "red" }}>
-          {connected ? "LIVE" : "OFFLINE"}
-        </span>
-      </div>
+      <p>
+        Status:{" "}
+        <b style={{ color: connected ? "lime" : "red" }}>
+          {connected ? "CONNECTED" : "OFFLINE"}
+        </b>
+      </p>
 
-      {/* MARKET INFO */}
-      <div style={{
-        marginTop: 15,
-        padding: 10,
-        background: "#0f172a",
-        borderRadius: 6,
-        display: "flex",
-        gap: 20
-      }}>
-        <div>BTC: {data?.btc}</div>
-        <div>BTC Δ: {data?.btcChange}%</div>
-        <div>Market: INDODAX</div>
-      </div>
+      <hr />
 
-      {/* TABLE HEADER */}
-      <div style={{
-        marginTop: 20,
-        display: "grid",
-        gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
-        fontWeight: "bold",
-        borderBottom: "1px solid #333",
-        paddingBottom: 10
-      }}>
-        <div>COIN</div>
-        <div>PRICE</div>
-        <div>CHANGE</div>
-        <div>SCORE</div>
-        <div>SIGNAL</div>
-      </div>
+      <h3>BTC: {data?.btc ?? "-"}</h3>
+      <p>Market: {data?.regime ?? "-"}</p>
 
-      {/* DATA TABLE */}
+      <hr />
+
+      <h3>📊 COINS</h3>
+
+      {!data?.coins?.length && (
+        <p style={{ opacity: 0.5 }}>Waiting data...</p>
+      )}
+
       {data?.coins?.map((c: any, i: number) => (
         <div
           key={i}
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
             padding: 10,
-            borderBottom: "1px solid #111",
-            background: c.score > 5 ? "#052e16" : c.score < -5 ? "#3f0a0a" : "transparent"
+            margin: 10,
+            border: "1px solid #333",
+            borderRadius: 6,
+            background: c.score > 5 ? "#0f3d1f" : c.score < -5 ? "#3d0f0f" : "#111827"
           }}
         >
-          <div>{c.pair}</div>
-          <div>{c.price}</div>
-          <div style={{ color: c.change > 0 ? "#00ff88" : "#ff4444" }}>
-            {c.change}%
+          <b>{i + 1}. {c.pair}</b>
+
+          <div>Price: {c.price}</div>
+          <div>Change: {c.change}%</div>
+
+          <div>
+            Score:{" "}
+            <b style={{ color: c.score > 0 ? "#22c55e" : "#ef4444" }}>
+              {c.score ?? c.probability}
+            </b>
           </div>
-          <div style={{ color: c.score > 0 ? "#00ff88" : "#ff4444" }}>
-            {c.score}
+
+          <div>
+            Signal:{" "}
+            <b>
+              {c.signal}
+            </b>
           </div>
-          <div>{c.signal}</div>
         </div>
       ))}
     </div>
