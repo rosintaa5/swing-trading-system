@@ -15,20 +15,19 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  console.log("Client connected");
+  console.log("client connected");
 
-  setInterval(() => {
-    socket.emit("swing", {
-      btc: Math.random() * 100000,
-      coins: [
-        { pair: "BTC/IDR", price: 1000000, signal: "BUY" },
-        { pair: "ETH/IDR", price: 50000, signal: "SELL" }
-      ]
-    });
-  }, 3000);
+  socket.emit("swing", {
+    btc: 65000,
+    coins: [
+      { pair: "BTC/IDR", price: 1000000, signal: "BUY" },
+      { pair: "ETH/IDR", price: 50000, signal: "SELL" }
+    ]
+  });
 });
 
 const PORT = process.env.PORT || 3000;
+
 server.listen(PORT, () => {
-  console.log("Server running on port", PORT);
+  console.log("server running on", PORT);
 });
