@@ -4,77 +4,84 @@ import { useEffect, useState } from "react";
 import { socket } from "@/lib/socket";
 
 export default function Page() {
-  const [data, setData] = useState<any>({
-    coins: [],
-    btc: "-",
-    btcChange: 0,
-    regime: "UNKNOWN"
-  });
-
+  const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    if (!socket) return;
+    socket.on("connect", () => setConnected(true));
+    socket.on("swing", setData);
 
-    socket.on("connect", () => {
-      console.log("socket connected");
-      setConnected(true);
-    });
-
-    socket.on("swing", (res) => {
-      console.log("DATA:", res);
-
-      // SAFE GUARD (ANTI NULL CRASH)
-      setData({
-        btc: res?.btc ?? "-",
-        btcChange: res?.btcChange ?? 0,
-        regime: res?.regime ?? "UNKNOWN",
-        coins: Array.isArray(res?.coins) ? res.coins : []
-      });
-    });
-
-    socket.on("disconnect", () => {
-      setConnected(false);
-    });
-
-    return () => {
-      socket.off("connect");
-      socket.off("swing");
-      socket.off("disconnect");
-    };
+    return () => socket.off();
   }, []);
 
   return (
-    <div style={{ padding: 20, background: "#0a0f1c", minHeight: "100vh", color: "#fff" }}>
-      
-      <h2>🚀 AI SWING V3</h2>
+    <div style={{
+      background: "#05070f",
+      minHeight: "100vh",
+      color: "#fff",
+      fontFamily: "monospace",
+      padding: 20
+    }}>
 
-      <p>
-        Status:{" "}
-        <b style={{ color: connected ? "lime" : "red" }}>
+      {/* HEADER */}
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <h2>📊 INDODAX PRO TERMINAL</h2>
+        <span style={{ color: connected ? "#00ff88" : "red" }}>
           {connected ? "LIVE" : "OFFLINE"}
-        </b>
-      </p>
+        </span>
+      </div>
 
-      <hr />
+      {/* MARKET INFO */}
+      <div style={{
+        marginTop: 15,
+        padding: 10,
+        background: "#0f172a",
+        borderRadius: 6,
+        display: "flex",
+        gap: 20
+      }}>
+        <div>BTC: {data?.btc}</div>
+        <div>BTC Δ: {data?.btcChange}%</div>
+        <div>Market: INDODAX</div>
+      </div>
 
-      <h3>BTC: {data.btc}</h3>
-      <p>Market: {data.regime}</p>
+      {/* TABLE HEADER */}
+      <div style={{
+        marginTop: 20,
+        display: "grid",
+        gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
+        fontWeight: "bold",
+        borderBottom: "1px solid #333",
+        paddingBottom: 10
+      }}>
+        <div>COIN</div>
+        <div>PRICE</div>
+        <div>CHANGE</div>
+        <div>SCORE</div>
+        <div>SIGNAL</div>
+      </div>
 
-      <hr />
-
-      <h3>📊 COIN LIST</h3>
-
-      {data.coins.length === 0 && (
-        <p style={{ opacity: 0.6 }}>Waiting data...</p>
-      )}
-
-      {data.coins.map((c: any, i: number) => (
-        <div key={i} style={{ margin: 10, padding: 10, border: "1px solid #333" }}>
-          <b>{c.pair}</b>
-          <div>Price: {c.price}</div>
-          <div>Prob: {c.probability ?? c.score}</div>
-          <div>Signal: {c.signal}</div>
+      {/* DATA TABLE */}
+      {data?.coins?.map((c: any, i: number) => (
+        <div
+          key={i}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr",
+            padding: 10,
+            borderBottom: "1px solid #111",
+            background: c.score > 5 ? "#052e16" : c.score < -5 ? "#3f0a0a" : "transparent"
+          }}
+        >
+          <div>{c.pair}</div>
+          <div>{c.price}</div>
+          <div style={{ color: c.change > 0 ? "#00ff88" : "#ff4444" }}>
+            {c.change}%
+          </div>
+          <div style={{ color: c.score > 0 ? "#00ff88" : "#ff4444" }}>
+            {c.score}
+          </div>
+          <div>{c.signal}</div>
         </div>
       ))}
     </div>
