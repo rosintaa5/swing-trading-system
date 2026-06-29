@@ -8,72 +8,81 @@ export default function Page() {
   const [connected, setConnected] = useState(false);
 
   useEffect(() => {
-    socket.on("connect", () => {
-      console.log("socket connected");
-      setConnected(true);
-    });
-
-    socket.on("swing", (res) => {
-      console.log("DATA RECEIVED:", res);
-      setData(res);
-    });
-
-    socket.on("disconnect", () => {
-      setConnected(false);
-    });
+    socket.on("connect", () => setConnected(true));
+    socket.on("swing", (res) => setData(res));
 
     return () => {
       socket.off("connect");
       socket.off("swing");
-      socket.off("disconnect");
     };
   }, []);
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>SWING DASHBOARD</h2>
+    <div style={{
+      padding: 20,
+      background: "#0a0f1c",
+      minHeight: "100vh",
+      color: "#fff",
+      fontFamily: "Arial"
+    }}>
 
-      <p>
-        Status:{" "}
-        <b style={{ color: connected ? "green" : "red" }}>
-          {connected ? "CONNECTED" : "DISCONNECTED"}
-        </b>
-      </p>
+      {/* HEADER */}
+      <div style={{ display: "flex", justifyContent: "space-between" }}>
+        <h2>📊 AI SWING SCANNER V2</h2>
+        <span style={{ color: connected ? "#22c55e" : "#ef4444" }}>
+          {connected ? "LIVE" : "OFFLINE"}
+        </span>
+      </div>
 
-      <p>BTC: {data?.btc ?? "-"}</p>
+      {/* BTC */}
+      <div style={{
+        marginTop: 20,
+        padding: 15,
+        background: "#111827",
+        borderRadius: 10
+      }}>
+        <h3>BTC PRICE</h3>
+        <h1>{data?.btc ?? "-"}</h1>
+      </div>
 
-      <div>
+      {/* RANKING */}
+      <div style={{ marginTop: 20 }}>
+        <h3>🔥 TOP RANKING SIGNAL</h3>
+
         {data?.coins?.map((c: any, i: number) => (
           <div
             key={i}
             style={{
-              border: "1px solid #ccc",
-              margin: 10,
-              padding: 10
+              display: "flex",
+              justifyContent: "space-between",
+              padding: 12,
+              marginTop: 10,
+              borderRadius: 8,
+              background:
+                c.score > 5
+                  ? "#14532d"
+                  : c.score < -5
+                  ? "#450a0a"
+                  : "#1f2937"
             }}
           >
-            <b>{c.pair}</b>
-            <br />
-            PRICE: {c.price}
-            <br />
-            CHANGE: {c.change}
-            <br />
-            SIGNAL:{" "}
-            <span
-              style={{
-                color:
-                  c.signal?.includes("BUY")
-                    ? "green"
-                    : c.signal?.includes("SELL")
-                    ? "red"
-                    : "orange"
-              }}
-            >
-              {c.signal}
-            </span>
+            <div>
+              <b>{i + 1}. {c.pair}</b>
+              <div style={{ fontSize: 12, opacity: 0.7 }}>
+                {c.signal}
+              </div>
+            </div>
+
+            <div style={{ textAlign: "right" }}>
+              <div>{c.price}</div>
+              <div style={{ color: c.score > 0 ? "#22c55e" : "#ef4444" }}>
+                SCORE: {c.score}
+              </div>
+            </div>
           </div>
         ))}
       </div>
+
     </div>
   );
 }
