@@ -5,23 +5,17 @@ const cors = require("cors");
 const axios = require("axios");
 
 const app = express();
-
-app.use(cors({
-  origin: "*"
-}));
+app.use(cors({ origin: "*" }));
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
+  cors: { origin: "*" },
   transports: ["polling", "websocket"]
 });
 
 // =========================
-// INDODAX DATA FETCH
+// FETCH MARKET DATA
 // =========================
 async function getTickers() {
   const res = await axios.get("https://indodax.com/api/tickers");
@@ -29,38 +23,56 @@ async function getTickers() {
 }
 
 // =========================
-// AI SCORE V2 ENGINE
+// BTC MARKET REGIME
 // =========================
-function calculateAIScore(ticker, btcChange = 0) {
+function getMarketRegime(btcChange) {
+  if (btcChange > 2) return "BULLISH";
+  if (btcChange < -2) return "BEARISH";
+  return "SIDEWAYS";
+}
+
+// =========================
+// AI V3 PREDICTION ENGINE
+// =========================
+function predictProbability(ticker, btcChange) {
   const change = parseFloat(ticker.change || 0);
   const high = parseFloat(ticker.high || ticker.last);
   const low = parseFloat(ticker.low || ticker.last);
 
-  const momentum = change;
   const volatility = ((high - low) / low) * 100;
-  const btcFactor = btcChange * 0.8;
-  const volumePressure = volatility * 0.6;
-  const trendStability = change > 0 ? change * 0.5 : change * 0.5;
 
-  const score =
-    (momentum * 0.35) +
-    (volatility * 0.20) +
-    (btcFactor * 0.20) +
-    (volumePressure * 0.15) +
-    (trendStability * 0.10);
+  const trendMomentum = change;
+  const breakoutPower = volatility * 0.7;
+  const meanReversion = -change * 0.4;
 
-  return Number(score.toFixed(2));
+  const btcInfluence = btcChange * 0.9;
+
+  // FINAL PROBABILITY SCORE (-100 to +100)
+  const rawScore =
+    (trendMomentum * 1.5) +
+    (breakoutPower * 0.8) +
+    (meanReversion) +
+    (btcInfluence);
+
+  return Math.max(-100, Math.min(100, rawScore));
 }
 
 // =========================
-// SIGNAL ENGINE
+// SIGNAL ENGINE V3
 // =========================
-function getSignal(score) {
-  if (score >= 7) return "🔥 STRONG BUY";
-  if (score >= 3) return "BUY";
-  if (score <= -7) return "🚨 STRONG SELL";
-  if (score <= -3) return "SELL";
+function getSignalV3(score) {
+  if (score >= 60) return "🔥 STRONG BUY";
+  if (score >= 25) return "BUY";
+  if (score <= -60) return "🚨 STRONG SELL";
+  if (score <= -25) return "SELL";
   return "NEUTRAL";
+}
+
+// =========================
+// CONFIDENCE LEVEL
+// =========================
+function getConfidence(score) {
+  return Math.min(100, Math.abs(score)).toFixed(0);
 }
 
 // =========================
@@ -74,51 +86,49 @@ io.on("connection", (socket) => {
       const tickers = await getTickers();
 
       const btcChange = parseFloat(tickers.btc_idr?.change || 0);
+      const regime = getMarketRegime(btcChange);
 
       const coins = Object.keys(tickers)
-        .slice(0, 20)
+        .slice(0, 25)
         .map((key) => {
           const t = tickers[key];
 
-          const score = calculateAIScore(t, btcChange);
+          const score = predictProbability(t, btcChange);
 
           return {
             pair: key.toUpperCase(),
             price: parseFloat(t.last),
             change: parseFloat(t.change),
-            score,
-            signal: getSignal(score)
+            probability: Number(score.toFixed(2)),
+            confidence: getConfidence(score),
+            signal: getSignalV3(score),
+            regime
           };
         })
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => Math.abs(b.probability) - Math.abs(a.probability));
 
       socket.emit("swing", {
         btc: tickers.btc_idr?.last,
+        btcChange,
+        regime,
         coins
       });
 
     } catch (err) {
-      console.log("error:", err.message);
+      console.log(err.message);
     }
   };
 
   sendData();
-  const interval = setInterval(sendData, 5000);
+  const interval = setInterval(sendData, 4000);
 
   socket.on("disconnect", () => clearInterval(interval));
 });
 
-// =========================
-// HEALTH CHECK
-// =========================
 app.get("/", (req, res) => {
-  res.send("AI Swing Engine V2 Running");
+  res.send("AI Swing V3 Prediction Engine Running");
 });
 
-// =========================
-// START SERVER
-// =========================
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log("server running on", PORT);
+server.listen(process.env.PORT || 3000, () => {
+  console.log("server running");
 });
