@@ -10,8 +10,7 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
+    origin: "*"
   },
   transports: ["websocket", "polling"]
 });
@@ -22,7 +21,8 @@ io.on("connection", (socket) => {
   socket.emit("swing", {
     btc: 65000,
     coins: [
-      { pair: "BTC/USDT", price: 65000, signal: "HOLD" }
+      { pair: "BTC/USDT", price: 65000, signal: "BUY" },
+      { pair: "ETH/USDT", price: 3200, signal: "SELL" }
     ]
   });
 });
