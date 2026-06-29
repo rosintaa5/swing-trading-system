@@ -4,19 +4,24 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 
 const app = express();
-app.use(cors());
+
+app.use(cors({
+  origin: "*"
+}));
 
 const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: "*"
+    origin: "*",
+    methods: ["GET", "POST"]
   },
-  transports: ["websocket", "polling"]
+  transports: ["polling", "websocket"],
+  allowEIO3: true
 });
 
 io.on("connection", (socket) => {
-  console.log("client connected");
+  console.log("client connected:", socket.id);
 
   socket.emit("swing", {
     btc: 65000,
@@ -27,6 +32,11 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("server running");
+app.get("/", (req, res) => {
+  res.send("Socket server running");
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log("server running on", PORT);
 });
