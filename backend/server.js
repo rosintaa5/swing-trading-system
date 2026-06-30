@@ -57,6 +57,8 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
+
+  console.log("DB READY");
 }
 initDB();
 
@@ -64,11 +66,18 @@ initDB();
 const BASE = "https://indodax.com/api";
 
 async function getTickers() {
-  const res = await axios.get(`${BASE}/tickers`);
-  return res.data.tickers || {};
+  try {
+    const res = await axios.get(`${BASE}/tickers`, {
+      timeout: 5000
+    });
+    return res.data?.tickers || {};
+  } catch (e) {
+    console.log("Ticker API error:", e.message);
+    return {};
+  }
 }
 
-// ================= FORMAT PAIR (FIX UTAMA) =================
+// ================= FORMAT PAIR =================
 function formatPair(key) {
   if (!key) return "UNKNOWN";
   return key.replace("_", "/").toUpperCase();
@@ -76,73 +85,64 @@ function formatPair(key) {
 
 // ================= TP SL ENGINE =================
 function calculateLevels(price, signal) {
-  const safePrice = Number(price) || 0;
-  const risk = safePrice * 0.02;
+  const p = Number(price) || 0;
+  const risk = p * 0.02;
 
   if (signal === "BUY") {
     return {
-      tp1: safePrice * 1.03,
-      tp2: safePrice * 1.06,
-      sl: safePrice - risk
+      tp1: p * 1.03,
+      tp2: p * 1.06,
+      sl: p - risk
     };
   }
 
   if (signal === "SELL") {
     return {
-      tp1: safePrice * 0.97,
-      tp2: safePrice * 0.94,
-      sl: safePrice + risk
+      tp1: p * 0.97,
+      tp2: p * 0.94,
+      sl: p + risk
     };
   }
 
-  return { tp1: safePrice, tp2: safePrice, sl: safePrice };
+  return { tp1: p, tp2: p, sl: p };
 }
 
 // ================= AI ENGINE =================
-function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
+function analyzeCoin(ticker = {}, btcChange = 0, pair = "") {
   const last = Number(ticker.last || 0);
   const high = Number(ticker.high || last);
   const low = Number(ticker.low || last);
   const change = Number(ticker.change || 0);
 
+  if (!last) return null;
+
   const volatility = low > 0 ? ((high - low) / low) * 100 : 0;
-  const volumePressure = Math.log1p(Number(ticker.vol_idr || 1)) / 10;
+  const volume = Math.log1p(Number(ticker.vol_idr || 1)) / 10;
 
   let score =
     change * 1.6 +
     volatility * 0.9 +
     btcChange * 0.7 +
-    volumePressure;
+    volume;
 
   score = Math.max(-10, Math.min(10, score));
 
   let signal = "HOLD";
   let prediction = "SIDEWAYS";
-  let reason = "Market neutral condition";
 
-  if (score > 3) {
-    signal = "BUY";
-    prediction = "UP";
-    reason = "Bullish momentum detected";
-  } else if (score < -3) {
-    signal = "SELL";
-    prediction = "DOWN";
-    reason = "Bearish pressure detected";
-  }
-
-  const accuracy = Math.min(97, Math.max(55, 72 + Math.abs(change) * 2.8));
+  if (score > 3) signal = "BUY";
+  if (score < -3) signal = "SELL";
 
   const levels = calculateLevels(last, signal);
 
   return {
-    pair: pairName,
+    pair,
     price: last,
     change,
     score: Number(score.toFixed(2)),
     signal,
     prediction,
-    reason,
-    accuracy: Number(accuracy.toFixed(1)),
+    accuracy: Number((70 + Math.abs(change) * 2).toFixed(1)),
     entry: last,
     tp1: levels.tp1,
     tp2: levels.tp2,
@@ -150,8 +150,10 @@ function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
   };
 }
 
-// ================= SAVE SNAPSHOT =================
+// ================= SNAPSHOT SAVE =================
 async function saveSnapshot(data) {
+  if (!data) return;
+
   try {
     await pool.query(
       `INSERT INTO market_snapshots 
@@ -171,7 +173,7 @@ async function saveSnapshot(data) {
       ]
     );
   } catch (e) {
-    console.log("DB save error:", e.message);
+    console.log("DB ERROR:", e.message);
   }
 }
 
@@ -180,35 +182,30 @@ io.on("connection", (socket) => {
   console.log("client connected");
 
   const stream = async () => {
-    try {
-      const tickers = await getTickers();
-      const btcChange = Number(tickers.btc_idr?.change || 0);
+    const tickers = await getTickers();
+    const btcChange = Number(tickers.btc_idr?.change || 0);
 
-      const coins = Object.keys(tickers)
-        .slice(0, 40)
-        .map((key) => {
-          const ticker = tickers[key];
+    const coins = Object.keys(tickers)
+      .slice(0, 40)
+      .map((key) => {
+        const pair = formatPair(key);
+        return analyzeCoin(tickers[key], btcChange, pair);
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
 
-          const pair = formatPair(key); // ✅ FIX UTAMA
-
-          return analyzeCoin(ticker, btcChange, pair);
-        })
-        .filter((c) => c.price > 0)
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 5);
-
-      coins.forEach((c) => saveSnapshot(c));
-
-      socket.emit("swing", {
-        btc: tickers.btc_idr?.last || 0,
-        btcChange,
-        coins,
-        timestamp: Date.now()
-      });
-
-    } catch (err) {
-      console.log("stream error:", err.message);
+    // SAVE SAFE
+    for (const c of coins) {
+      await saveSnapshot(c);
     }
+
+    socket.emit("swing", {
+      btc: tickers.btc_idr?.last || 0,
+      btcChange,
+      coins,
+      timestamp: Date.now()
+    });
   };
 
   stream();
@@ -217,12 +214,12 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => clearInterval(interval));
 });
 
-// ================= PORTFOLIO =================
+// ================= PORTFOLIO CRUD =================
 app.post("/portfolio", async (req, res) => {
   const { pair, entry_price, amount, tp1, tp2, sl } = req.body;
 
-  if (!pair) {
-    return res.status(400).json({ error: "PAIR REQUIRED" });
+  if (!pair || !entry_price) {
+    return res.status(400).json({ error: "INVALID DATA" });
   }
 
   const result = await pool.query(
@@ -241,6 +238,11 @@ app.get("/portfolio", async (req, res) => {
   res.json(result.rows);
 });
 
+app.delete("/portfolio/:id", async (req, res) => {
+  await pool.query("DELETE FROM portfolio WHERE id=$1", [req.params.id]);
+  res.json({ success: true });
+});
+
 // ================= HISTORY =================
 app.get("/market/history", async (req, res) => {
   const result = await pool.query(
@@ -251,7 +253,11 @@ app.get("/market/history", async (req, res) => {
 
 // ================= HEALTH =================
 app.get("/", (req, res) => {
-  res.send("AI TRADING TERMINAL PRO FIXED FULL RUNNING");
+  res.json({
+    status: "OK",
+    service: "TRADING ENGINE STABLE",
+    time: new Date()
+  });
 });
 
 server.listen(process.env.PORT || 3000);
