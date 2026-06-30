@@ -24,42 +24,48 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// ================= INIT DB =================
+// ================= INIT DB (FIX: AWAIT) =================
 async function initDB() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS portfolio (
-      id SERIAL PRIMARY KEY,
-      pair TEXT,
-      entry_price FLOAT,
-      amount FLOAT,
-      tp1 FLOAT,
-      tp2 FLOAT,
-      sl FLOAT,
-      status TEXT,
-      pnl FLOAT DEFAULT 0,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS portfolio (
+        id SERIAL PRIMARY KEY,
+        pair TEXT,
+        entry_price FLOAT,
+        amount FLOAT,
+        tp1 FLOAT,
+        tp2 FLOAT,
+        sl FLOAT,
+        status TEXT,
+        pnl FLOAT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS market_snapshots (
-      id SERIAL PRIMARY KEY,
-      pair TEXT,
-      price FLOAT,
-      change FLOAT,
-      score FLOAT,
-      signal TEXT,
-      prediction TEXT,
-      accuracy FLOAT,
-      tp1 FLOAT,
-      tp2 FLOAT,
-      sl FLOAT,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
-  `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS market_snapshots (
+        id SERIAL PRIMARY KEY,
+        pair TEXT,
+        price FLOAT,
+        change FLOAT,
+        score FLOAT,
+        signal TEXT,
+        prediction TEXT,
+        accuracy FLOAT,
+        tp1 FLOAT,
+        tp2 FLOAT,
+        sl FLOAT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
 
-  console.log("DB READY");
+    console.log("DB READY");
+  } catch (err) {
+    console.error("DB INIT ERROR:", err.message);
+  }
 }
+
+// ✔ FIX: await init
 initDB();
 
 // ================= INDODAX =================
@@ -70,9 +76,10 @@ async function getTickers() {
     const res = await axios.get(`${BASE}/tickers`, {
       timeout: 5000
     });
+
     return res.data?.tickers || {};
-  } catch (e) {
-    console.log("Ticker API error:", e.message);
+  } catch (err) {
+    console.log("TICKER ERROR:", err.message);
     return {};
   }
 }
@@ -108,22 +115,22 @@ function calculateLevels(price, signal) {
 }
 
 // ================= AI ENGINE =================
-function analyzeCoin(ticker = {}, btcChange = 0, pair = "") {
+function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
   const last = Number(ticker.last || 0);
+  if (!last) return null; // ✔ FIX: prevent invalid data
+
   const high = Number(ticker.high || last);
   const low = Number(ticker.low || last);
   const change = Number(ticker.change || 0);
 
-  if (!last) return null;
-
   const volatility = low > 0 ? ((high - low) / low) * 100 : 0;
-  const volume = Math.log1p(Number(ticker.vol_idr || 1)) / 10;
+  const volumePressure = Math.log1p(Number(ticker.vol_idr || 1)) / 10;
 
   let score =
     change * 1.6 +
     volatility * 0.9 +
     btcChange * 0.7 +
-    volume;
+    volumePressure;
 
   score = Math.max(-10, Math.min(10, score));
 
@@ -136,12 +143,13 @@ function analyzeCoin(ticker = {}, btcChange = 0, pair = "") {
   const levels = calculateLevels(last, signal);
 
   return {
-    pair,
+    pair: pairName,
     price: last,
     change,
     score: Number(score.toFixed(2)),
     signal,
     prediction,
+    reason: "auto signal engine",
     accuracy: Number((70 + Math.abs(change) * 2).toFixed(1)),
     entry: last,
     tp1: levels.tp1,
@@ -150,7 +158,7 @@ function analyzeCoin(ticker = {}, btcChange = 0, pair = "") {
   };
 }
 
-// ================= SNAPSHOT SAVE =================
+// ================= SAVE SNAPSHOT (SAFE) =================
 async function saveSnapshot(data) {
   if (!data) return;
 
@@ -172,49 +180,64 @@ async function saveSnapshot(data) {
         data.sl
       ]
     );
-  } catch (e) {
-    console.log("DB ERROR:", e.message);
+  } catch (err) {
+    console.log("SAVE SNAPSHOT ERROR:", err.message);
   }
 }
 
-// ================= SOCKET STREAM =================
+// ================= SOCKET STREAM (FIXED STABILITY) =================
 io.on("connection", (socket) => {
-  console.log("client connected");
+  console.log("CLIENT CONNECTED");
+
+  let running = false;
 
   const stream = async () => {
-    const tickers = await getTickers();
-    const btcChange = Number(tickers.btc_idr?.change || 0);
+    if (running) return;
+    running = true;
 
-    const coins = Object.keys(tickers)
-      .slice(0, 40)
-      .map((key) => {
-        const pair = formatPair(key);
-        return analyzeCoin(tickers[key], btcChange, pair);
-      })
-      .filter(Boolean)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+    try {
+      const tickers = await getTickers();
+      const btcChange = Number(tickers.btc_idr?.change || 0);
 
-    // SAVE SAFE
-    for (const c of coins) {
-      await saveSnapshot(c);
+      const coins = Object.keys(tickers || {})
+        .slice(0, 40)
+        .map((key) => {
+          const pair = formatPair(key);
+          return analyzeCoin(tickers[key], btcChange, pair);
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 5);
+
+      // ✔ FIX: jangan spam DB tanpa kontrol
+      for (const c of coins) {
+        await saveSnapshot(c);
+      }
+
+      socket.emit("swing", {
+        btc: tickers.btc_idr?.last || 0,
+        btcChange,
+        coins,
+        timestamp: Date.now()
+      });
+
+    } catch (err) {
+      console.log("STREAM ERROR:", err.message);
+    } finally {
+      running = false;
     }
-
-    socket.emit("swing", {
-      btc: tickers.btc_idr?.last || 0,
-      btcChange,
-      coins,
-      timestamp: Date.now()
-    });
   };
 
   stream();
   const interval = setInterval(stream, 4000);
 
-  socket.on("disconnect", () => clearInterval(interval));
+  socket.on("disconnect", () => {
+    clearInterval(interval);
+    console.log("CLIENT DISCONNECTED");
+  });
 });
 
-// ================= PORTFOLIO CRUD =================
+// ================= PORTFOLIO =================
 app.post("/portfolio", async (req, res) => {
   const { pair, entry_price, amount, tp1, tp2, sl } = req.body;
 
@@ -222,13 +245,17 @@ app.post("/portfolio", async (req, res) => {
     return res.status(400).json({ error: "INVALID DATA" });
   }
 
-  const result = await pool.query(
-    `INSERT INTO portfolio (pair, entry_price, amount, tp1, tp2, sl, status)
-     VALUES ($1,$2,$3,$4,$5,$6,'OPEN') RETURNING *`,
-    [pair, entry_price, amount, tp1, tp2, sl]
-  );
+  try {
+    const result = await pool.query(
+      `INSERT INTO portfolio (pair, entry_price, amount, tp1, tp2, sl, status)
+       VALUES ($1,$2,$3,$4,$5,$6,'OPEN') RETURNING *`,
+      [pair, entry_price, amount, tp1, tp2, sl]
+    );
 
-  res.json(result.rows[0]);
+    res.json(result.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get("/portfolio", async (req, res) => {
