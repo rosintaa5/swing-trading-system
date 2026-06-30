@@ -3,195 +3,214 @@
 import { useEffect, useState } from "react";
 import { socket } from "@/lib/socket";
 
+const API = "http://localhost:3000";
+
+/**
+ * =========================
+ * DASHBOARD STATE
+ * =========================
+ */
 export default function Page() {
-  const [data, setData] = useState<any>(null);
-  const [connected, setConnected] = useState(false);
+  const [market, setMarket] = useState<any>(null);
   const [portfolio, setPortfolio] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
+  const [tab, setTab] = useState<"market" | "portfolio">("market");
   const [loading, setLoading] = useState(false);
 
-  // ================= SOCKET =================
+  /**
+   * =========================
+   * SOCKET (REALTIME MARKET)
+   * =========================
+   */
   useEffect(() => {
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("swing", (res) => setData(res));
+    socket.on("swing", (res) => {
+      setMarket(res);
+    });
 
     return () => {
-      socket.off("connect");
-      socket.off("disconnect");
       socket.off("swing");
     };
   }, []);
 
-  // ================= API WRAPPER =================
-  const api = "http://localhost:3000";
+  /**
+   * =========================
+   * LOAD PORTFOLIO
+   * =========================
+   */
+  const loadPortfolio = async () => {
+    const res = await fetch(`${API}/portfolio`);
+    const json = await res.json();
+    setPortfolio(json);
+  };
 
-  // ================= CRUD PORTFOLIO =================
-  const addPortfolio = async (coin: any) => {
+  /**
+   * =========================
+   * DELETE PORTFOLIO (CRUD)
+   * =========================
+   */
+  const deletePortfolio = async (id: number) => {
+    await fetch(`${API}/portfolio/${id}`, {
+      method: "DELETE",
+    });
+
+    loadPortfolio();
+  };
+
+  /**
+   * =========================
+   * LOAD HISTORY
+   * =========================
+   */
+  const loadHistory = async () => {
+    const res = await fetch(`${API}/market/history`);
+    const json = await res.json();
+    setHistory(json);
+  };
+
+  /**
+   * =========================
+   * CREATE TRADE (BUY - CRUD)
+   * =========================
+   * FIX PENTING:
+   * backend pakai entry_price = price
+   */
+  const buyTrade = async (coin: any) => {
     try {
       setLoading(true);
 
-      if (!coin?.pair) return alert("PAIR INVALID");
+      if (!coin?.pair || !coin?.price) {
+        alert("INVALID DATA");
+        return;
+      }
 
-      const res = await fetch(`${api}/portfolio`, {
+      const payload = {
+        pair: coin.pair,
+        entry_price: coin.price,
+        amount: 1,
+        tp1: coin.tp1,
+        tp2: coin.tp2,
+        sl: coin.sl,
+      };
+
+      const res = await fetch(`${API}/portfolio`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pair: coin.pair,
-          entry_price: coin.entry,
-          amount: 1,
-          tp1: coin.tp1,
-          tp2: coin.tp2,
-          sl: coin.sl
-        })
+        body: JSON.stringify(payload),
       });
 
-      if (!res.ok) throw new Error("Failed BUY");
+      if (!res.ok) {
+        const err = await res.json();
+        alert(err.error || "FAILED BUY");
+        return;
+      }
 
       await loadPortfolio();
-      alert("ORDER CREATED");
-    } catch (err: any) {
-      alert(err.message);
+    } catch (e: any) {
+      alert(e.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadPortfolio = async () => {
-    const res = await fetch(`${api}/portfolio`);
-    const json = await res.json();
-    setPortfolio(json);
-  };
-
-  const deletePortfolio = async (id: number) => {
-    await fetch(`${api}/portfolio/${id}`, { method: "DELETE" });
+  /**
+   * =========================
+   * INIT LOAD
+   * =========================
+   */
+  useEffect(() => {
     loadPortfolio();
-  };
+    loadHistory();
+  }, []);
 
-  const loadHistory = async () => {
-    const res = await fetch(`${api}/market/history`);
-    const json = await res.json();
-    setHistory(json);
-  };
-
-  // ================= FILTER =================
-  const coins =
-    data?.coins?.filter((c: any) =>
-      filter === "ALL" ? true : c.signal === filter
-    ) || [];
+  const coins = market?.coins || [];
 
   return (
-    <div className="dashboard">
+    <div className="app">
 
-      {/* TOP BAR */}
-      <div className="topbar">
-        <div>
-          <h2>AI TRADING TERMINAL</h2>
-          <p className="sub">Realtime crypto signal engine</p>
-        </div>
+      {/* HEADER */}
+      <div className="header">
+        <h2>SMART TRADING DASHBOARD</h2>
 
-        <div className={`status ${connected ? "on" : "off"}`}>
-          {connected ? "LIVE" : "OFFLINE"}
+        <div className="tabs">
+          <button onClick={() => setTab("market")}>Market</button>
+          <button onClick={() => setTab("portfolio")}>Portfolio</button>
         </div>
       </div>
 
-      {/* BTC CARD */}
-      <div className="card hero">
-        <h3>BITCOIN</h3>
-        <h1>{data?.btc ?? "-"}</h1>
-        <span>24H: {data?.btcChange ?? 0}%</span>
-      </div>
+      {/* ================= MARKET ================= */}
+      {tab === "market" && (
+        <div className="grid">
 
-      {/* FILTER BAR */}
-      <div className="row">
-        <button onClick={() => setFilter("ALL")}>ALL</button>
-        <button onClick={() => setFilter("BUY")}>BUY</button>
-        <button onClick={() => setFilter("SELL")}>SELL</button>
-        <button onClick={loadPortfolio}>PORTFOLIO</button>
-        <button onClick={loadHistory}>HISTORY</button>
-      </div>
+          {coins.map((c: any, i: number) => (
+            <div className="card" key={i}>
 
-      {/* COINS GRID */}
-      <div className="grid">
-        {coins.map((c: any, i: number) => (
-          <div className="coin" key={i}>
+              <div className="row">
+                <b>{c.pair}</b>
+                <span className={c.signal}>{c.signal}</span>
+              </div>
 
-            <div className="coin-head">
-              <b>{c.pair}</b>
-              <span className={c.signal}>{c.signal}</span>
-            </div>
+              <div>Price: {c.price}</div>
 
-            <div className="price">Price: {c.price}</div>
-            <div>Entry: {c.entry}</div>
+              <div className="levels">
+                <div>TP1: {c.tp1?.toFixed?.(2)}</div>
+                <div>TP2: {c.tp2?.toFixed?.(2)}</div>
+                <div>SL: {c.sl?.toFixed?.(2)}</div>
+              </div>
 
-            <div className="tp">
-              <div>TP1: {c.tp1?.toFixed?.(2)}</div>
-              <div>TP2: {c.tp2?.toFixed?.(2)}</div>
-              <div>SL: {c.sl?.toFixed?.(2)}</div>
-            </div>
+              <div className="reason">{c.reason}</div>
 
-            <div className="reason">{c.reason}</div>
-
-            <div className="actions">
               <button
-                className="buy"
                 disabled={loading}
-                onClick={() => addPortfolio(c)}
+                onClick={() => buyTrade(c)}
+                className="buy"
               >
                 BUY
               </button>
 
-              <button
-                className="ghost"
-                onClick={() =>
-                  alert(
-                    `${c.pair}\nENTRY:${c.entry}\nTP1:${c.tp1}\nTP2:${c.tp2}\nSL:${c.sl}`
-                  )
-                }
-              >
-                DETAIL
+            </div>
+          ))}
+
+        </div>
+      )}
+
+      {/* ================= PORTFOLIO ================= */}
+      {tab === "portfolio" && (
+        <div className="list">
+
+          {portfolio.map((p) => (
+            <div className="item" key={p.id}>
+
+              <div>
+                <b>{p.pair}</b>
+                <div>ENTRY: {p.entry_price}</div>
+                <div>TP1: {p.tp1}</div>
+                <div>SL: {p.sl}</div>
+              </div>
+
+              <button onClick={() => deletePortfolio(p.id)}>
+                DELETE
               </button>
+
             </div>
+          ))}
 
-          </div>
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* PORTFOLIO */}
-      <h3 className="section">PORTFOLIO</h3>
-
-      <div className="list">
-        {portfolio.map((p: any) => (
-          <div className="item" key={p.id}>
-            <div>
-              <b>{p.pair}</b>
-              <small>ENTRY: {p.entry_price}</small>
-              <small>TP1: {p.tp1}</small>
-              <small>SL: {p.sl}</small>
-            </div>
-
-            <button onClick={() => deletePortfolio(p.id)}>
-              DELETE
-            </button>
-          </div>
-        ))}
-      </div>
-
-      {/* HISTORY */}
-      <h3 className="section">HISTORY</h3>
-
+      {/* ================= HISTORY ================= */}
       <div className="history">
-        {history.slice(0, 10).map((h: any, i: number) => (
+        <h3>HISTORY</h3>
+
+        {history.slice(0, 10).map((h, i) => (
           <div key={i}>
             {h.pair} | {h.signal} | {h.score}
           </div>
         ))}
       </div>
 
-      {/* STYLE */}
+      {/* ================= STYLE ================= */}
       <style jsx>{`
-        .dashboard {
+        .app {
           background: #050816;
           color: white;
           min-height: 100vh;
@@ -199,49 +218,15 @@ export default function Page() {
           font-family: sans-serif;
         }
 
-        .topbar {
+        .header {
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
 
-        .sub {
-          opacity: 0.6;
-          font-size: 12px;
-        }
-
-        .status {
+        .tabs button {
+          margin-left: 8px;
           padding: 6px 12px;
-          border-radius: 20px;
-        }
-
-        .on {
-          background: #16a34a;
-        }
-
-        .off {
-          background: #dc2626;
-        }
-
-        .card.hero {
-          margin-top: 20px;
-          padding: 20px;
-          background: #0f172a;
-          border-radius: 12px;
-        }
-
-        .row {
-          display: flex;
-          gap: 8px;
-          margin-top: 15px;
-          flex-wrap: wrap;
-        }
-
-        button {
-          padding: 8px 12px;
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
         }
 
         .grid {
@@ -251,14 +236,14 @@ export default function Page() {
           margin-top: 20px;
         }
 
-        .coin {
+        .card {
           background: #111827;
           padding: 14px;
-          border-radius: 12px;
+          border-radius: 10px;
           border: 1px solid #1f2937;
         }
 
-        .coin-head {
+        .row {
           display: flex;
           justify-content: space-between;
         }
@@ -271,37 +256,33 @@ export default function Page() {
           color: #ef4444;
         }
 
-        .actions {
-          display: flex;
-          gap: 8px;
-          margin-top: 10px;
+        .levels {
+          margin-top: 8px;
+          font-size: 13px;
         }
 
         .buy {
+          margin-top: 10px;
+          width: 100%;
+          padding: 8px;
           background: #16a34a;
+          border: none;
           color: white;
-        }
-
-        .ghost {
-          background: #334155;
-          color: white;
+          border-radius: 6px;
+          cursor: pointer;
         }
 
         .list .item {
           display: flex;
           justify-content: space-between;
-          padding: 10px;
           background: #0f172a;
-          margin-top: 8px;
+          padding: 10px;
+          margin-top: 10px;
           border-radius: 8px;
         }
 
-        .section {
-          margin-top: 25px;
-        }
-
         .history {
-          margin-top: 10px;
+          margin-top: 30px;
           font-size: 13px;
           opacity: 0.8;
         }
