@@ -6,7 +6,10 @@ import { socket } from "@/lib/socket";
 export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
+  const [history, setHistory] = useState<any[]>([]);
+  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
 
+  // ================= SOCKET =================
   useEffect(() => {
     const onConnect = () => setConnected(true);
     const onDisconnect = () => setConnected(false);
@@ -23,113 +26,150 @@ export default function Page() {
     };
   }, []);
 
+  // ================= PORTFOLIO =================
+  const addPortfolio = async (coin: any) => {
+    await fetch("http://localhost:3000/portfolio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pair: coin.pair,
+        entry_price: coin.entry,
+        amount: 1,
+        tp1: coin.tp1,
+        tp2: coin.tp2,
+        sl: coin.sl
+      })
+    });
+  };
+
+  // ================= HISTORY =================
+  const loadHistory = async () => {
+    const res = await fetch("http://localhost:3000/market/history");
+    const json = await res.json();
+    setHistory(json);
+  };
+
+  // ================= FILTER =================
+  const coins =
+    data?.coins?.filter((c: any) => {
+      if (filter === "ALL") return true;
+      return c.signal === filter;
+    }) || [];
+
   return (
     <div style={styles.container}>
 
       {/* HEADER */}
       <div style={styles.header}>
-        <h2>⚡ AI TRADING TERMINAL V3</h2>
+        <h2>⚡ AI TRADING TERMINAL V4</h2>
 
         <div style={{
           ...styles.badge,
           background: connected ? "#16a34a" : "#dc2626"
         }}>
-          {connected ? "LIVE STREAM" : "DISCONNECTED"}
+          {connected ? "LIVE" : "OFFLINE"}
         </div>
       </div>
 
       {/* BTC PANEL */}
       <div style={styles.card}>
-        <h3>₿ BITCOIN OVERVIEW</h3>
+        <h3>BITCOIN</h3>
         <h1>{data?.btc ?? "-"}</h1>
         <p>24H Change: {data?.btcChange ?? 0}%</p>
       </div>
 
-      {/* NEWS */}
-      <h3 style={{ marginTop: 20 }}>📰 MARKET NEWS</h3>
-
-      <div style={styles.grid}>
-        {(data?.news ?? []).map((n: any, i: number) => (
-          <div key={i} style={styles.newsCard}>
-            <b>{n.title}</b>
-            <div style={{ opacity: 0.6 }}>Impact: {n.impact}</div>
-          </div>
-        ))}
+      {/* FILTER BUTTONS */}
+      <div style={styles.row}>
+        <button style={styles.btn} onClick={() => setFilter("ALL")}>ALL</button>
+        <button style={styles.btn} onClick={() => setFilter("BUY")}>BUY</button>
+        <button style={styles.btn} onClick={() => setFilter("SELL")}>SELL</button>
+        <button style={styles.btn} onClick={loadHistory}>LOAD HISTORY</button>
       </div>
 
-      {/* TOP COINS */}
-      <h3 style={{ marginTop: 25 }}>🔥 TOP AI SIGNALS</h3>
+      {/* COINS */}
+      <h3 style={{ marginTop: 20 }}>TOP SIGNALS</h3>
 
-      {(data?.coins ?? []).map((c: any, i: number) => (
-        <div
-          key={i}
-          style={{
-            ...styles.coinCard,
-            borderColor:
-              c.signal === "BUY"
-                ? "#16a34a"
-                : c.signal === "SELL"
-                ? "#dc2626"
-                : "#334155"
-          }}
-        >
+      {coins.map((c: any, i: number) => (
+        <div key={i} style={styles.coinCard}>
+
           <div style={styles.coinHeader}>
-            <b>{i + 1}. {c.pair}</b>
+            <b>{c.pair}</b>
 
             <span style={{
               color:
-                c.accuracy > 80
+                c.signal === "BUY"
                   ? "#22c55e"
-                  : c.accuracy > 60
-                  ? "#facc15"
-                  : "#ef4444"
+                  : c.signal === "SELL"
+                  ? "#ef4444"
+                  : "#94a3b8"
             }}>
-              {c.accuracy}% ACC
+              {c.signal}
             </span>
           </div>
 
           <div>💰 Price: {c.price}</div>
-          <div>📉 Low: {c.buy} | 📈 High: {c.sell}</div>
+          <div>📊 Entry: {c.entry}</div>
 
-          <div style={{
-            marginTop: 6,
-            fontWeight: "bold",
-            color:
-              c.signal === "BUY"
-                ? "#22c55e"
-                : c.signal === "SELL"
-                ? "#ef4444"
-                : "#94a3b8"
-          }}>
-            {c.signal} → {c.prediction}
+          <div style={{ marginTop: 8 }}>
+            🎯 TP1: {c.tp1?.toFixed?.(2)}
+          </div>
+          <div>
+            🎯 TP2: {c.tp2?.toFixed?.(2)}
+          </div>
+          <div>
+            🛑 SL: {c.sl?.toFixed?.(2)}
           </div>
 
-          <div style={{ fontSize: 12, opacity: 0.7 }}>
+          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
             {c.reason}
           </div>
+
+          <div style={{ marginTop: 8 }}>
+            Accuracy: {c.accuracy}%
+          </div>
+
+          {/* ACTION BUTTONS */}
+          <div style={styles.row}>
+            <button style={styles.buyBtn} onClick={() => addPortfolio(c)}>
+              BUY / SAVE
+            </button>
+
+            <button
+              style={styles.detailBtn}
+              onClick={() =>
+                alert(
+                  `PAIR: ${c.pair}\nENTRY: ${c.entry}\nTP1: ${c.tp1}\nTP2: ${c.tp2}\nSL: ${c.sl}`
+                )
+              }
+            >
+              DETAILS
+            </button>
+          </div>
+
         </div>
       ))}
 
-      {/* PORTFOLIO PLACEHOLDER (READY FOR API) */}
-      <h3 style={{ marginTop: 25 }}>📊 PORTFOLIO (DB READY)</h3>
+      {/* HISTORY */}
+      <h3 style={{ marginTop: 30 }}>HISTORY</h3>
 
-      <div style={styles.card}>
-        <p style={{ opacity: 0.7 }}>
-          Endpoint: /portfolio (GET/POST already active di backend)
-        </p>
-      </div>
+      {history.slice(0, 10).map((h, i) => (
+        <div key={i} style={styles.historyCard}>
+          <b>{h.pair}</b> | {h.signal} | score: {h.score}
+        </div>
+      ))}
 
     </div>
   );
 }
 
+// ================= STYLES =================
 const styles: any = {
   container: {
     background: "#050816",
     minHeight: "100vh",
     color: "#fff",
-    padding: 24,
-    fontFamily: "Inter, sans-serif"
+    padding: 20,
+    fontFamily: "sans-serif"
   },
   header: {
     display: "flex",
@@ -142,31 +182,57 @@ const styles: any = {
     fontSize: 12
   },
   card: {
-    marginTop: 20,
-    padding: 20,
-    borderRadius: 12,
+    marginTop: 15,
+    padding: 15,
     background: "#0f172a",
-    border: "1px solid #1f2937"
-  },
-  grid: {
-    display: "grid",
-    gap: 10
-  },
-  newsCard: {
-    padding: 12,
-    borderRadius: 10,
-    background: "#111827",
-    border: "1px solid #1f2937"
+    borderRadius: 10
   },
   coinCard: {
     marginTop: 12,
     padding: 14,
-    borderRadius: 12,
-    background: "#0f172a",
+    background: "#111827",
+    borderRadius: 10,
     border: "1px solid #1f2937"
   },
   coinHeader: {
     display: "flex",
     justifyContent: "space-between"
+  },
+  row: {
+    display: "flex",
+    gap: 8,
+    marginTop: 10,
+    flexWrap: "wrap"
+  },
+  btn: {
+    padding: "6px 10px",
+    background: "#1f2937",
+    border: "1px solid #334155",
+    color: "white",
+    borderRadius: 6,
+    cursor: "pointer"
+  },
+  buyBtn: {
+    padding: "6px 10px",
+    background: "#16a34a",
+    border: "none",
+    color: "white",
+    borderRadius: 6,
+    cursor: "pointer"
+  },
+  detailBtn: {
+    padding: "6px 10px",
+    background: "#334155",
+    border: "none",
+    color: "white",
+    borderRadius: 6,
+    cursor: "pointer"
+  },
+  historyCard: {
+    marginTop: 8,
+    padding: 10,
+    background: "#0f172a",
+    borderRadius: 8,
+    border: "1px solid #1f2937"
   }
 };
