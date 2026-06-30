@@ -32,7 +32,11 @@ async function initDB() {
       pair TEXT,
       entry_price FLOAT,
       amount FLOAT,
+      tp1 FLOAT,
+      tp2 FLOAT,
+      sl FLOAT,
       status TEXT,
+      pnl FLOAT DEFAULT 0,
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
@@ -47,6 +51,9 @@ async function initDB() {
       signal TEXT,
       prediction TEXT,
       accuracy FLOAT,
+      tp1 FLOAT,
+      tp2 FLOAT,
+      sl FLOAT,
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
@@ -61,16 +68,37 @@ async function getTickers() {
   return res.data.tickers;
 }
 
-// ================= AI ENGINE =================
+// ================= TP SL ENGINE =================
+function calculateLevels(price, signal) {
+  const risk = price * 0.02;
+
+  if (signal === "BUY") {
+    return {
+      tp1: price * 1.03,
+      tp2: price * 1.06,
+      sl: price - risk
+    };
+  }
+
+  if (signal === "SELL") {
+    return {
+      tp1: price * 0.97,
+      tp2: price * 0.94,
+      sl: price + risk
+    };
+  }
+
+  return { tp1: price, tp2: price, sl: price };
+}
+
+// ================= AI ENGINE (ORIGINAL + UPGRADE) =================
 function analyzeCoin(ticker, btcChange) {
   const change = parseFloat(ticker.change || 0);
   const high = parseFloat(ticker.high || ticker.last);
   const low = parseFloat(ticker.low || ticker.last);
 
   const volatility = ((high - low) / low) * 100;
-
-  const volumePressure =
-    Math.log1p(parseFloat(ticker.vol_idr || 1)) / 10;
+  const volumePressure = Math.log1p(parseFloat(ticker.vol_idr || 1)) / 10;
 
   let score =
     change * 1.6 +
@@ -104,30 +132,31 @@ function analyzeCoin(ticker, btcChange) {
 
   const accuracy = Math.min(97, Math.max(55, 72 + Math.abs(change) * 2.8));
 
+  const entry = Number(ticker.last);
+  const levels = calculateLevels(entry, signal);
+
   return {
+    pair: ticker.pair,
+    price: entry,
+    change,
     score: Number(score.toFixed(2)),
     signal,
     prediction,
     reason,
-    accuracy: Number(accuracy.toFixed(1))
+    accuracy: Number(accuracy.toFixed(1)),
+    entry,
+    tp1: levels.tp1,
+    tp2: levels.tp2,
+    sl: levels.sl
   };
-}
-
-// ================= NEWS =================
-function getNews() {
-  return [
-    { title: "Bitcoin volatility spike detected", impact: "HIGH" },
-    { title: "Altcoin inflow increasing", impact: "MEDIUM" },
-    { title: "Market sentiment shifting", impact: "LOW" }
-  ];
 }
 
 // ================= SAVE SNAPSHOT =================
 async function saveSnapshot(data) {
   const query = `
     INSERT INTO market_snapshots 
-    (pair, price, change, score, signal, prediction, accuracy)
-    VALUES ($1,$2,$3,$4,$5,$6,$7)
+    (pair, price, change, score, signal, prediction, accuracy, tp1, tp2, sl)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
   `;
 
   await pool.query(query, [
@@ -137,7 +166,10 @@ async function saveSnapshot(data) {
     data.score,
     data.signal,
     data.prediction,
-    data.accuracy
+    data.accuracy,
+    data.tp1,
+    data.tp2,
+    data.sl
   ]);
 }
 
@@ -152,23 +184,10 @@ io.on("connection", (socket) => {
 
       const coins = Object.keys(tickers)
         .slice(0, 40)
-        .map((key) => {
-          const t = tickers[key];
-          const analysis = analyzeCoin(t, btcChange);
-
-          return {
-            pair: key.toUpperCase(),
-            price: Number(t.last),
-            buy: Number(t.low),
-            sell: Number(t.high),
-            change: Number(t.change),
-            ...analysis
-          };
-        })
+        .map((key) => analyzeCoin(tickers[key], btcChange))
         .sort((a, b) => b.score - a.score)
         .slice(0, 5);
 
-      // SAVE DATA
       coins.forEach((c) => {
         saveSnapshot(c).catch(console.error);
       });
@@ -177,7 +196,6 @@ io.on("connection", (socket) => {
         btc: tickers.btc_idr?.last,
         btcChange,
         coins,
-        news: getNews(),
         timestamp: Date.now()
       });
 
@@ -192,7 +210,19 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => clearInterval(interval));
 });
 
-// ================= PORTFOLIO API =================
+// ================= PORTFOLIO =================
+app.post("/portfolio", async (req, res) => {
+  const { pair, entry_price, amount, tp1, tp2, sl } = req.body;
+
+  const result = await pool.query(
+    `INSERT INTO portfolio (pair, entry_price, amount, tp1, tp2, sl, status)
+     VALUES ($1,$2,$3,$4,$5,$6,'OPEN') RETURNING *`,
+    [pair, entry_price, amount, tp1, tp2, sl]
+  );
+
+  res.json(result.rows[0]);
+});
+
 app.get("/portfolio", async (req, res) => {
   const result = await pool.query(
     "SELECT * FROM portfolio ORDER BY created_at DESC"
@@ -200,36 +230,17 @@ app.get("/portfolio", async (req, res) => {
   res.json(result.rows);
 });
 
-app.post("/portfolio", async (req, res) => {
-  const { pair, entry_price, amount, status } = req.body;
-
-  const result = await pool.query(
-    `INSERT INTO portfolio (pair, entry_price, amount, status)
-     VALUES ($1,$2,$3,$4) RETURNING *`,
-    [pair, entry_price, amount, status]
-  );
-
-  res.json(result.rows[0]);
-});
-
-// ================= MARKET HISTORY API =================
+// ================= HISTORY =================
 app.get("/market/history", async (req, res) => {
-  const { pair } = req.query;
-
   const result = await pool.query(
-    `SELECT * FROM market_snapshots 
-     WHERE ($1::text IS NULL OR pair = $1)
-     ORDER BY created_at DESC
-     LIMIT 200`,
-    [pair || null]
+    "SELECT * FROM market_snapshots ORDER BY created_at DESC LIMIT 200"
   );
-
   res.json(result.rows);
 });
 
 // ================= HEALTH =================
 app.get("/", (req, res) => {
-  res.send("AI Trading Terminal PRO V2 Running");
+  res.send("AI TRADING TERMINAL PRO FULL SYSTEM RUNNING");
 });
 
 server.listen(process.env.PORT || 3000);
