@@ -68,6 +68,12 @@ async function getTickers() {
   return res.data.tickers || {};
 }
 
+// ================= FORMAT PAIR (FIX UTAMA) =================
+function formatPair(key) {
+  if (!key) return "UNKNOWN";
+  return key.replace("_", "/").toUpperCase();
+}
+
 // ================= TP SL ENGINE =================
 function calculateLevels(price, signal) {
   const safePrice = Number(price) || 0;
@@ -92,7 +98,7 @@ function calculateLevels(price, signal) {
   return { tp1: safePrice, tp2: safePrice, sl: safePrice };
 }
 
-// ================= AI ENGINE (FIXED SAFE VERSION) =================
+// ================= AI ENGINE =================
 function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
   const last = Number(ticker.last || 0);
   const high = Number(ticker.high || last);
@@ -129,7 +135,7 @@ function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
   const levels = calculateLevels(last, signal);
 
   return {
-    pair: pairName || ticker.pair || "UNKNOWN",
+    pair: pairName,
     price: last,
     change,
     score: Number(score.toFixed(2)),
@@ -178,9 +184,15 @@ io.on("connection", (socket) => {
       const tickers = await getTickers();
       const btcChange = Number(tickers.btc_idr?.change || 0);
 
-      const coins = Object.keys(tickers || {})
+      const coins = Object.keys(tickers)
         .slice(0, 40)
-        .map((key) => analyzeCoin(tickers[key], btcChange, key.toUpperCase()))
+        .map((key) => {
+          const ticker = tickers[key];
+
+          const pair = formatPair(key); // ✅ FIX UTAMA
+
+          return analyzeCoin(ticker, btcChange, pair);
+        })
         .filter((c) => c.price > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 5);
@@ -239,7 +251,7 @@ app.get("/market/history", async (req, res) => {
 
 // ================= HEALTH =================
 app.get("/", (req, res) => {
-  res.send("AI TRADING TERMINAL PRO FULL SYSTEM RUNNING");
+  res.send("AI TRADING TERMINAL PRO FIXED FULL RUNNING");
 });
 
 server.listen(process.env.PORT || 3000);
