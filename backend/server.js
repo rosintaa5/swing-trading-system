@@ -65,40 +65,42 @@ const BASE = "https://indodax.com/api";
 
 async function getTickers() {
   const res = await axios.get(`${BASE}/tickers`);
-  return res.data.tickers;
+  return res.data.tickers || {};
 }
 
 // ================= TP SL ENGINE =================
 function calculateLevels(price, signal) {
-  const risk = price * 0.02;
+  const safePrice = Number(price) || 0;
+  const risk = safePrice * 0.02;
 
   if (signal === "BUY") {
     return {
-      tp1: price * 1.03,
-      tp2: price * 1.06,
-      sl: price - risk
+      tp1: safePrice * 1.03,
+      tp2: safePrice * 1.06,
+      sl: safePrice - risk
     };
   }
 
   if (signal === "SELL") {
     return {
-      tp1: price * 0.97,
-      tp2: price * 0.94,
-      sl: price + risk
+      tp1: safePrice * 0.97,
+      tp2: safePrice * 0.94,
+      sl: safePrice + risk
     };
   }
 
-  return { tp1: price, tp2: price, sl: price };
+  return { tp1: safePrice, tp2: safePrice, sl: safePrice };
 }
 
-// ================= AI ENGINE (ORIGINAL + UPGRADE) =================
-function analyzeCoin(ticker, btcChange) {
-  const change = parseFloat(ticker.change || 0);
-  const high = parseFloat(ticker.high || ticker.last);
-  const low = parseFloat(ticker.low || ticker.last);
+// ================= AI ENGINE (FIXED SAFE VERSION) =================
+function analyzeCoin(ticker = {}, btcChange = 0, pairName = "") {
+  const last = Number(ticker.last || 0);
+  const high = Number(ticker.high || last);
+  const low = Number(ticker.low || last);
+  const change = Number(ticker.change || 0);
 
-  const volatility = ((high - low) / low) * 100;
-  const volumePressure = Math.log1p(parseFloat(ticker.vol_idr || 1)) / 10;
+  const volatility = low > 0 ? ((high - low) / low) * 100 : 0;
+  const volumePressure = Math.log1p(Number(ticker.vol_idr || 1)) / 10;
 
   let score =
     change * 1.6 +
@@ -112,39 +114,30 @@ function analyzeCoin(ticker, btcChange) {
   let prediction = "SIDEWAYS";
   let reason = "Market neutral condition";
 
-  if (score > 7) {
+  if (score > 3) {
     signal = "BUY";
     prediction = "UP";
-    reason = "Strong momentum + volume breakout";
-  } else if (score > 3) {
-    signal = "BUY";
-    prediction = "UP";
-    reason = "Early bullish structure";
-  } else if (score < -7) {
-    signal = "SELL";
-    prediction = "DOWN";
-    reason = "Strong bearish pressure";
+    reason = "Bullish momentum detected";
   } else if (score < -3) {
     signal = "SELL";
     prediction = "DOWN";
-    reason = "Downtrend continuation";
+    reason = "Bearish pressure detected";
   }
 
   const accuracy = Math.min(97, Math.max(55, 72 + Math.abs(change) * 2.8));
 
-  const entry = Number(ticker.last);
-  const levels = calculateLevels(entry, signal);
+  const levels = calculateLevels(last, signal);
 
   return {
-    pair: ticker.pair,
-    price: entry,
+    pair: pairName || ticker.pair || "UNKNOWN",
+    price: last,
     change,
     score: Number(score.toFixed(2)),
     signal,
     prediction,
     reason,
     accuracy: Number(accuracy.toFixed(1)),
-    entry,
+    entry: last,
     tp1: levels.tp1,
     tp2: levels.tp2,
     sl: levels.sl
@@ -153,24 +146,27 @@ function analyzeCoin(ticker, btcChange) {
 
 // ================= SAVE SNAPSHOT =================
 async function saveSnapshot(data) {
-  const query = `
-    INSERT INTO market_snapshots 
-    (pair, price, change, score, signal, prediction, accuracy, tp1, tp2, sl)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-  `;
-
-  await pool.query(query, [
-    data.pair,
-    data.price,
-    data.change,
-    data.score,
-    data.signal,
-    data.prediction,
-    data.accuracy,
-    data.tp1,
-    data.tp2,
-    data.sl
-  ]);
+  try {
+    await pool.query(
+      `INSERT INTO market_snapshots 
+      (pair, price, change, score, signal, prediction, accuracy, tp1, tp2, sl)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [
+        data.pair,
+        data.price,
+        data.change,
+        data.score,
+        data.signal,
+        data.prediction,
+        data.accuracy,
+        data.tp1,
+        data.tp2,
+        data.sl
+      ]
+    );
+  } catch (e) {
+    console.log("DB save error:", e.message);
+  }
 }
 
 // ================= SOCKET STREAM =================
@@ -180,27 +176,26 @@ io.on("connection", (socket) => {
   const stream = async () => {
     try {
       const tickers = await getTickers();
-      const btcChange = parseFloat(tickers.btc_idr?.change || 0);
+      const btcChange = Number(tickers.btc_idr?.change || 0);
 
-      const coins = Object.keys(tickers)
+      const coins = Object.keys(tickers || {})
         .slice(0, 40)
-        .map((key) => analyzeCoin(tickers[key], btcChange))
+        .map((key) => analyzeCoin(tickers[key], btcChange, key.toUpperCase()))
+        .filter((c) => c.price > 0)
         .sort((a, b) => b.score - a.score)
         .slice(0, 5);
 
-      coins.forEach((c) => {
-        saveSnapshot(c).catch(console.error);
-      });
+      coins.forEach((c) => saveSnapshot(c));
 
       socket.emit("swing", {
-        btc: tickers.btc_idr?.last,
+        btc: tickers.btc_idr?.last || 0,
         btcChange,
         coins,
         timestamp: Date.now()
       });
 
     } catch (err) {
-      console.log(err.message);
+      console.log("stream error:", err.message);
     }
   };
 
@@ -213,6 +208,10 @@ io.on("connection", (socket) => {
 // ================= PORTFOLIO =================
 app.post("/portfolio", async (req, res) => {
   const { pair, entry_price, amount, tp1, tp2, sl } = req.body;
+
+  if (!pair) {
+    return res.status(400).json({ error: "PAIR REQUIRED" });
+  }
 
   const result = await pool.query(
     `INSERT INTO portfolio (pair, entry_price, amount, tp1, tp2, sl, status)
