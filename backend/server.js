@@ -36,6 +36,20 @@ async function initDB() {
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS market_snapshots (
+      id SERIAL PRIMARY KEY,
+      pair TEXT,
+      price FLOAT,
+      change FLOAT,
+      score FLOAT,
+      signal TEXT,
+      prediction TEXT,
+      accuracy FLOAT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
 }
 initDB();
 
@@ -47,7 +61,7 @@ async function getTickers() {
   return res.data.tickers;
 }
 
-// ================= AI ENGINE (UPGRADED) =================
+// ================= AI ENGINE =================
 function analyzeCoin(ticker, btcChange) {
   const change = parseFloat(ticker.change || 0);
   const high = parseFloat(ticker.high || ticker.last);
@@ -55,13 +69,16 @@ function analyzeCoin(ticker, btcChange) {
 
   const volatility = ((high - low) / low) * 100;
 
-  const volumePressure = Math.random() * 2; // simulate smart money
+  const volumePressure =
+    Math.log1p(parseFloat(ticker.vol_idr || 1)) / 10;
 
   let score =
     change * 1.6 +
     volatility * 0.9 +
     btcChange * 0.7 +
     volumePressure;
+
+  score = Math.max(-10, Math.min(10, score));
 
   let signal = "HOLD";
   let prediction = "SIDEWAYS";
@@ -100,9 +117,28 @@ function analyzeCoin(ticker, btcChange) {
 function getNews() {
   return [
     { title: "Bitcoin volatility spike detected", impact: "HIGH" },
-    { title: "Altcoin inflow increasing on exchanges", impact: "MEDIUM" },
-    { title: "Market sentiment shifting bullish", impact: "LOW" }
+    { title: "Altcoin inflow increasing", impact: "MEDIUM" },
+    { title: "Market sentiment shifting", impact: "LOW" }
   ];
+}
+
+// ================= SAVE SNAPSHOT =================
+async function saveSnapshot(data) {
+  const query = `
+    INSERT INTO market_snapshots 
+    (pair, price, change, score, signal, prediction, accuracy)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)
+  `;
+
+  await pool.query(query, [
+    data.pair,
+    data.price,
+    data.change,
+    data.score,
+    data.signal,
+    data.prediction,
+    data.accuracy
+  ]);
 }
 
 // ================= SOCKET STREAM =================
@@ -132,6 +168,11 @@ io.on("connection", (socket) => {
         .sort((a, b) => b.score - a.score)
         .slice(0, 5);
 
+      // SAVE DATA
+      coins.forEach((c) => {
+        saveSnapshot(c).catch(console.error);
+      });
+
       socket.emit("swing", {
         btc: tickers.btc_idr?.last,
         btcChange,
@@ -149,6 +190,41 @@ io.on("connection", (socket) => {
   const interval = setInterval(stream, 4000);
 
   socket.on("disconnect", () => clearInterval(interval));
+});
+
+// ================= PORTFOLIO API =================
+app.get("/portfolio", async (req, res) => {
+  const result = await pool.query(
+    "SELECT * FROM portfolio ORDER BY created_at DESC"
+  );
+  res.json(result.rows);
+});
+
+app.post("/portfolio", async (req, res) => {
+  const { pair, entry_price, amount, status } = req.body;
+
+  const result = await pool.query(
+    `INSERT INTO portfolio (pair, entry_price, amount, status)
+     VALUES ($1,$2,$3,$4) RETURNING *`,
+    [pair, entry_price, amount, status]
+  );
+
+  res.json(result.rows[0]);
+});
+
+// ================= MARKET HISTORY API =================
+app.get("/market/history", async (req, res) => {
+  const { pair } = req.query;
+
+  const result = await pool.query(
+    `SELECT * FROM market_snapshots 
+     WHERE ($1::text IS NULL OR pair = $1)
+     ORDER BY created_at DESC
+     LIMIT 200`,
+    [pair || null]
+  );
+
+  res.json(result.rows);
 });
 
 // ================= HEALTH =================
