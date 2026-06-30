@@ -7,6 +7,7 @@ export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [portfolio, setPortfolio] = useState<any[]>([]);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
 
   // ================= SOCKET =================
@@ -26,8 +27,10 @@ export default function Page() {
     };
   }, []);
 
-  // ================= PORTFOLIO =================
+  // ================= CRUD PORTFOLIO =================
   const addPortfolio = async (coin: any) => {
+    if (!coin?.pair) return alert("PAIR NULL");
+
     await fetch("http://localhost:3000/portfolio", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,6 +43,22 @@ export default function Page() {
         sl: coin.sl
       })
     });
+
+    loadPortfolio(); // auto refresh
+  };
+
+  const loadPortfolio = async () => {
+    const res = await fetch("http://localhost:3000/portfolio");
+    const json = await res.json();
+    setPortfolio(json);
+  };
+
+  const deletePortfolio = async (id: number) => {
+    await fetch(`http://localhost:3000/portfolio/${id}`, {
+      method: "DELETE"
+    });
+
+    loadPortfolio();
   };
 
   // ================= HISTORY =================
@@ -61,7 +80,7 @@ export default function Page() {
 
       {/* HEADER */}
       <div style={styles.header}>
-        <h2>⚡ AI TRADING TERMINAL V4</h2>
+        <h2>⚡ AI TRADING TERMINAL V5 (CRUD FIXED)</h2>
 
         <div style={{
           ...styles.badge,
@@ -71,19 +90,20 @@ export default function Page() {
         </div>
       </div>
 
-      {/* BTC PANEL */}
+      {/* BTC */}
       <div style={styles.card}>
         <h3>BITCOIN</h3>
         <h1>{data?.btc ?? "-"}</h1>
         <p>24H Change: {data?.btcChange ?? 0}%</p>
       </div>
 
-      {/* FILTER BUTTONS */}
+      {/* FILTER */}
       <div style={styles.row}>
         <button style={styles.btn} onClick={() => setFilter("ALL")}>ALL</button>
         <button style={styles.btn} onClick={() => setFilter("BUY")}>BUY</button>
         <button style={styles.btn} onClick={() => setFilter("SELL")}>SELL</button>
-        <button style={styles.btn} onClick={loadHistory}>LOAD HISTORY</button>
+        <button style={styles.btn} onClick={loadHistory}>HISTORY</button>
+        <button style={styles.btn} onClick={loadPortfolio}>PORTFOLIO</button>
       </div>
 
       {/* COINS */}
@@ -93,7 +113,7 @@ export default function Page() {
         <div key={i} style={styles.coinCard}>
 
           <div style={styles.coinHeader}>
-            <b>{c.pair}</b>
+            <b>{c.pair || "UNKNOWN"}</b>
 
             <span style={{
               color:
@@ -110,28 +130,23 @@ export default function Page() {
           <div>💰 Price: {c.price}</div>
           <div>📊 Entry: {c.entry}</div>
 
-          <div style={{ marginTop: 8 }}>
-            🎯 TP1: {c.tp1?.toFixed?.(2)}
-          </div>
-          <div>
-            🎯 TP2: {c.tp2?.toFixed?.(2)}
-          </div>
-          <div>
-            🛑 SL: {c.sl?.toFixed?.(2)}
-          </div>
+          <div>🎯 TP1: {c.tp1?.toFixed?.(2)}</div>
+          <div>🎯 TP2: {c.tp2?.toFixed?.(2)}</div>
+          <div>🛑 SL: {c.sl?.toFixed?.(2)}</div>
 
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.7 }}>
             {c.reason}
           </div>
 
-          <div style={{ marginTop: 8 }}>
-            Accuracy: {c.accuracy}%
-          </div>
+          <div>Accuracy: {c.accuracy}%</div>
 
-          {/* ACTION BUTTONS */}
+          {/* CRUD BUTTON */}
           <div style={styles.row}>
-            <button style={styles.buyBtn} onClick={() => addPortfolio(c)}>
-              BUY / SAVE
+            <button
+              style={styles.buyBtn}
+              onClick={() => addPortfolio(c)}
+            >
+              BUY (CREATE)
             </button>
 
             <button
@@ -149,12 +164,31 @@ export default function Page() {
         </div>
       ))}
 
+      {/* PORTFOLIO CRUD */}
+      <h3 style={{ marginTop: 30 }}>PORTFOLIO (CRUD)</h3>
+
+      {portfolio.map((p: any) => (
+        <div key={p.id} style={styles.historyCard}>
+          <b>{p.pair}</b>
+          <div>ENTRY: {p.entry_price}</div>
+          <div>TP1: {p.tp1}</div>
+          <div>SL: {p.sl}</div>
+
+          <button
+            style={styles.btn}
+            onClick={() => deletePortfolio(p.id)}
+          >
+            DELETE
+          </button>
+        </div>
+      ))}
+
       {/* HISTORY */}
       <h3 style={{ marginTop: 30 }}>HISTORY</h3>
 
       {history.slice(0, 10).map((h, i) => (
         <div key={i} style={styles.historyCard}>
-          <b>{h.pair}</b> | {h.signal} | score: {h.score}
+          <b>{h.pair}</b> | {h.signal} | {h.score}
         </div>
       ))}
 
@@ -173,8 +207,7 @@ const styles: any = {
   },
   header: {
     display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center"
+    justifyContent: "space-between"
   },
   badge: {
     padding: "6px 12px",
