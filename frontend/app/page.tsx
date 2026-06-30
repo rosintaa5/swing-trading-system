@@ -25,24 +25,24 @@ export default function Page() {
 
   return (
     <div style={styles.container}>
-      
+
       {/* HEADER */}
       <div style={styles.header}>
-        <h2>⚡ AI TRADING TERMINAL V2</h2>
+        <h2>⚡ AI TRADING TERMINAL V3</h2>
 
         <div style={{
           ...styles.badge,
           background: connected ? "#16a34a" : "#dc2626"
         }}>
-          {connected ? "LIVE MARKET" : "OFFLINE"}
+          {connected ? "LIVE STREAM" : "DISCONNECTED"}
         </div>
       </div>
 
       {/* BTC PANEL */}
       <div style={styles.card}>
-        <h3>₿ BITCOIN DASHBOARD</h3>
+        <h3>₿ BITCOIN OVERVIEW</h3>
         <h1>{data?.btc ?? "-"}</h1>
-        <p>Change: {data?.btcChange ?? 0}%</p>
+        <p>24H Change: {data?.btcChange ?? 0}%</p>
       </div>
 
       {/* NEWS */}
@@ -61,20 +61,28 @@ export default function Page() {
       <h3 style={{ marginTop: 25 }}>🔥 TOP AI SIGNALS</h3>
 
       {(data?.coins ?? []).map((c: any, i: number) => (
-        <div key={i} style={{
-          ...styles.coinCard,
-          borderColor:
-            c.signal === "BUY" ? "#16a34a" :
-            c.signal === "SELL" ? "#dc2626" : "#334155"
-        }}>
-          
+        <div
+          key={i}
+          style={{
+            ...styles.coinCard,
+            borderColor:
+              c.signal === "BUY"
+                ? "#16a34a"
+                : c.signal === "SELL"
+                ? "#dc2626"
+                : "#334155"
+          }}
+        >
           <div style={styles.coinHeader}>
             <b>{i + 1}. {c.pair}</b>
 
             <span style={{
               color:
-                c.accuracy > 80 ? "#22c55e" :
-                c.accuracy > 60 ? "#facc15" : "#ef4444"
+                c.accuracy > 80
+                  ? "#22c55e"
+                  : c.accuracy > 60
+                  ? "#facc15"
+                  : "#ef4444"
             }}>
               {c.accuracy}% ACC
             </span>
@@ -87,8 +95,11 @@ export default function Page() {
             marginTop: 6,
             fontWeight: "bold",
             color:
-              c.signal === "BUY" ? "#22c55e" :
-              c.signal === "SELL" ? "#ef4444" : "#94a3b8"
+              c.signal === "BUY"
+                ? "#22c55e"
+                : c.signal === "SELL"
+                ? "#ef4444"
+                : "#94a3b8"
           }}>
             {c.signal} → {c.prediction}
           </div>
@@ -96,9 +107,18 @@ export default function Page() {
           <div style={{ fontSize: 12, opacity: 0.7 }}>
             {c.reason}
           </div>
-
         </div>
       ))}
+
+      {/* PORTFOLIO PLACEHOLDER (READY FOR API) */}
+      <h3 style={{ marginTop: 25 }}>📊 PORTFOLIO (DB READY)</h3>
+
+      <div style={styles.card}>
+        <p style={{ opacity: 0.7 }}>
+          Endpoint: /portfolio (GET/POST already active di backend)
+        </p>
+      </div>
+
     </div>
   );
 }
