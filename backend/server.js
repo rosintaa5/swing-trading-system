@@ -23,7 +23,7 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false }
 });
 
-// ================= INIT =================
+// ================= INIT DB =================
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolio_positions (
@@ -44,6 +44,14 @@ async function initDB() {
       price FLOAT,
       score FLOAT,
       signal TEXT,
+      whale_score FLOAT,
+      momentum_score FLOAT,
+      liquidity_score FLOAT,
+      confidence FLOAT,
+      risk_score FLOAT,
+      tp1 FLOAT,
+      tp2 FLOAT,
+      sl FLOAT,
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
@@ -53,7 +61,7 @@ async function initDB() {
 
 initDB();
 
-// ================= INDODAX API =================
+// ================= INDODAX =================
 const BASE = "https://indodax.com/api";
 
 async function getTickers() {
@@ -61,50 +69,61 @@ async function getTickers() {
     const res = await axios.get(`${BASE}/tickers`, { timeout: 5000 });
     return res.data?.tickers || {};
   } catch (e) {
-    console.log("API ERROR:", e.message);
     return {};
   }
 }
 
 // ================= CACHE =================
-let cache = {
-  tickers: {},
-  lastUpdate: 0
-};
-
+let cache = { tickers: {}, lastUpdate: 0 };
 let streamLock = false;
-
-// auto safety unlock (anti deadlock)
-setInterval(() => {
-  streamLock = false;
-}, 10000);
 
 // ================= UTILS =================
 const num = (v) => Number(v || 0);
 
-// ================= AI ENGINE =================
+// ================= FULL AI ENGINE =================
 function analyzeCoin(t) {
-  try {
-    const price = num(t.last);
-    const vol = num(t.vol_idr);
-    const change = num(t.change);
+  const price = num(t.last);
+  const vol = num(t.vol_idr);
+  const change = num(t.change);
 
-    if (!price || vol < 100000000) return null;
+  if (!price || vol < 100000000) return null;
 
-    const whale = Math.log10(vol + 1);
-    const momentum = change * 2;
-    const liquidity = Math.log1p(vol) / 10;
+  const whale = Math.log10(vol + 1);
+  const momentum = change * 2;
+  const liquidity = Math.log1p(vol) / 10;
 
-    const score = whale * 2 + momentum * 1.5 + liquidity;
+  const score = whale * 2 + momentum * 1.5 + liquidity;
 
-    let signal = "HOLD";
-    if (score > 6) signal = "BUY";
-    if (score < -6) signal = "SELL";
+  const signal =
+    score > 6 ? "BUY" :
+    score < -6 ? "SELL" :
+    "HOLD";
 
-    return { price, vol, score, signal };
-  } catch {
-    return null;
-  }
+  return {
+    pair: t.pair || "UNKNOWN",
+    price,
+    score,
+    signal,
+
+    // ENTRY SYSTEM
+    entry: price,
+    tp1: price * 1.03,
+    tp2: price * 1.06,
+    sl: price * 0.98,
+
+    // SMART MONEY METRICS
+    whale_score: whale,
+    momentum_score: momentum,
+    liquidity_score: liquidity,
+
+    confidence: Math.min(100, 50 + Math.abs(score) * 5),
+    risk_score: Math.abs(score),
+
+    warning_level:
+      score > 8 ? "EXTREME" :
+      score > 6 ? "HIGH" :
+      score > 3 ? "MEDIUM" : "LOW"
+  };
 }
 
 // ================= MARKET CACHE =================
@@ -128,7 +147,6 @@ async function updatePortfolio(market) {
   const portfolio = await getPortfolio();
 
   let equity = 0;
-
   const tasks = [];
 
   for (const p of portfolio) {
@@ -147,7 +165,6 @@ async function updatePortfolio(market) {
   }
 
   await Promise.all(tasks);
-
   return equity;
 }
 
@@ -160,17 +177,14 @@ app.post("/buy", async (req, res) => {
       return res.status(400).json({ error: "INVALID DATA" });
     }
 
-    const safeAmount = amount || 1;
-
     const result = await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, status)
        VALUES ($1,$2,$3,'OPEN')
        RETURNING *`,
-      [pair, price, safeAmount]
+      [pair, price, amount || 1]
     );
 
-    res.json({ success: true, data: result.rows[0] });
-
+    res.json(result.rows[0]);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -187,22 +201,12 @@ app.post("/sell", async (req, res) => {
     );
 
     res.json({ success: true });
-
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-// ================= GET PORTFOLIO =================
-app.get("/portfolio", async (req, res) => {
-  const result = await pool.query(
-    "SELECT * FROM portfolio_positions ORDER BY created_at DESC"
-  );
-
-  res.json(result.rows);
-});
-
-// ================= STREAM =================
+// ================= STREAM ENGINE =================
 async function stream(socket) {
   if (streamLock) return;
   streamLock = true;
@@ -211,31 +215,45 @@ async function stream(socket) {
     await updateMarket();
 
     const tickers = cache.tickers;
-    const keys = Object.keys(tickers);
-
     const results = [];
 
-    for (const k of keys) {
+    for (const k of Object.keys(tickers)) {
       const r = analyzeCoin(tickers[k]);
-      if (r) results.push({ pair: k, ...r });
+      if (r) results.push(r);
     }
 
-    const ranked = results.sort((a, b) => b.score - a.score);
-    const top = ranked.slice(0, 10);
+    const top = results
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
 
-    // SAFE DB INSERT
+    // batch insert snapshot
     if (top.length > 0) {
       const values = [];
       const params = [];
 
       top.forEach((t, i) => {
-        values.push(`($${i * 3 + 1},$${i * 3 + 2},$${i * 3 + 3})`);
-        params.push(t.pair, t.price, t.score);
+        values.push(`($${i*10+1},$${i*10+2},$${i*10+3},$${i*10+4},$${i*10+5},$${i*10+6},$${i*10+7},$${i*10+8},$${i*10+9},$${i*10+10})`);
+
+        params.push(
+          t.pair,
+          t.price,
+          t.score,
+          t.signal,
+          t.whale_score,
+          t.momentum_score,
+          t.liquidity_score,
+          t.confidence,
+          t.risk_score,
+          t.tp1
+        );
       });
 
       await pool.query(
-        `INSERT INTO market_snapshots (pair, price, score)
-         VALUES ${values.join(",")}`,
+        `INSERT INTO market_snapshots 
+        (pair,price,score,s
+
+ignal,whale_score,momentum_score,liquidity_score,confidence,risk_score,tp1)
+        VALUES ${values.join(",")}`,
         params
       );
     }
@@ -243,9 +261,10 @@ async function stream(socket) {
     const equity = await updatePortfolio(tickers);
 
     socket.emit("v12_fixed", {
-      equity,
-      portfolio: await getPortfolio(),
+      btc: cache.tickers.btc_idr?.last,
+      btcChange: cache.tickers.btc_idr?.change,
       top,
+      equity,
       timestamp: Date.now()
     });
 
@@ -267,12 +286,7 @@ io.on("connection", (socket) => {
 
 // ================= HEALTH =================
 app.get("/", (req, res) => {
-  res.json({
-    status: "OK",
-    system: "V12 FIXED STABLE PRODUCTION BACKEND"
-  });
+  res.json({ status: "OK", system: "V12 FULL INSTITUTIONAL FIXED" });
 });
 
-server.listen(process.env.PORT || 3000, () => {
-  console.log("SYSTEM READY STABLE");
-});
+server.listen(process.env.PORT || 3000);
