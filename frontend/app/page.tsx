@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { socket } from "@/lib/socket";
 
-const API = "http://localhost:3000";
+const API = "https://confident-tranquility-production-ceaa.up.railway.app/";
 
 export default function Page() {
   const [data, setData] = useState<any>(null);
