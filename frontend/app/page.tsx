@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { socket } from "@/lib/socket";
 
 const API = "http://localhost:3000";
@@ -8,8 +8,11 @@ const API = "http://localhost:3000";
 export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
+
   const [portfolio, setPortfolio] = useState<any[]>([]);
   const [history, setHistory] = useState<any[]>([]);
+  const [news, setNews] = useState<any[]>([]);
+
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
   const [loading, setLoading] = useState(false);
 
@@ -18,22 +21,18 @@ export default function Page() {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    socket.on("swing", (res) => {
+    socket.on("v12_fixed", (res) => {
       setData(res);
     });
 
     return () => {
       socket.off("connect");
       socket.off("disconnect");
-      socket.off("swing");
+      socket.off("v12_fixed");
     };
   }, []);
 
-  // ================= SAFE COINS =================
-  const coins =
-    data?.coins?.filter((c: any) => c && c.price > 0) || [];
-
-  // ================= LOAD =================
+  // ================= LOAD DATA =================
   const loadPortfolio = async () => {
     const res = await fetch(`${API}/portfolio`);
     setPortfolio(await res.json());
@@ -44,59 +43,37 @@ export default function Page() {
     setHistory(await res.json());
   };
 
+  // NEWS SIMPLE MOCK (bisa diganti API crypto news nanti)
+  const loadNews = async () => {
+    setNews([
+      {
+        title: "Market volatility meningkat",
+        impact: "HIGH",
+        direction: "BEARISH"
+      },
+      {
+        title: "Bitcoin dominan naik",
+        impact: "MEDIUM",
+        direction: "BULLISH"
+      },
+      {
+        title: "Altcoin mulai akumulasi whale",
+        impact: "HIGH",
+        direction: "BULLISH"
+      }
+    ]);
+  };
+
   useEffect(() => {
     loadPortfolio();
     loadHistory();
+    loadNews();
   }, []);
 
-  // ================= BUY (FIXED TOTAL) =================
-  const addPortfolio = async (coin: any) => {
-    try {
-      setLoading(true);
-
-      if (!coin?.pair || !coin?.price) {
-        alert("INVALID DATA");
-        return;
-      }
-
-      const payload = {
-        pair: coin.pair,
-        entry_price: coin.price, // ✔ FIX IMPORTANT
-        amount: 1,
-        tp1: coin.tp1 || coin.price * 1.03,
-        tp2: coin.tp2 || coin.price * 1.06,
-        sl: coin.sl || coin.price * 0.98
-      };
-
-      const res = await fetch(`${API}/portfolio`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "BUY FAILED");
-      }
-
-      await loadPortfolio();
-      alert("ORDER CREATED");
-
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // ================= DELETE =================
-  const deletePortfolio = async (id: number) => {
-    await fetch(`${API}/portfolio/${id}`, {
-      method: "DELETE"
-    });
-
-    loadPortfolio();
-  };
+  // ================= SAFE DATA =================
+  const coins = useMemo(() => {
+    return data?.top?.filter((c: any) => c?.price > 0) || [];
+  }, [data]);
 
   // ================= FILTER =================
   const filteredCoins =
@@ -104,14 +81,64 @@ export default function Page() {
       ? coins
       : coins.filter((c: any) => c.signal === filter);
 
+  // ================= MARKET DIRECTION =================
+  const marketDirection = useMemo(() => {
+    if (!coins.length) return "UNKNOWN";
+
+    const buy = coins.filter((c: any) => c.signal === "BUY").length;
+    const sell = coins.filter((c: any) => c.signal === "SELL").length;
+
+    if (buy > sell + 2) return "BULLISH";
+    if (sell > buy + 2) return "BEARISH";
+    return "SIDEWAYS";
+  }, [coins]);
+
+  // ================= BUY =================
+  const addPortfolio = async (coin: any) => {
+    try {
+      setLoading(true);
+
+      const payload = {
+        pair: coin.pair,
+        entry_price: coin.price,
+        amount: 1
+      };
+
+      const res = await fetch(`${API}/buy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error("FAILED TO BUY");
+
+      await loadPortfolio();
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ================= SELL =================
+  const sellPortfolio = async (id: number) => {
+    await fetch(`${API}/sell`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id })
+    });
+
+    loadPortfolio();
+  };
+
   return (
     <div className="dashboard">
 
       {/* HEADER */}
       <div className="topbar">
         <div>
-          <h2>SMART TRADING DASHBOARD</h2>
-          <p className="sub">Realtime AI Market Engine</p>
+          <h2>INSTITUTIONAL TRADING DASHBOARD</h2>
+          <p>Real-time Quant Engine Monitor</p>
         </div>
 
         <div className={`status ${connected ? "on" : "off"}`}>
@@ -119,11 +146,29 @@ export default function Page() {
         </div>
       </div>
 
-      {/* BTC */}
-      <div className="card hero">
+      {/* WARNING PANEL */}
+      <div className={`warning ${marketDirection}`}>
+        ⚠ MARKET DIRECTION: {marketDirection}  
+        <br />
+        Risk Notice: High volatility detected, gunakan manajemen risiko.
+      </div>
+
+      {/* BTC PANEL */}
+      <div className="card">
         <h3>BITCOIN</h3>
         <h1>{data?.btc ?? "-"}</h1>
-        <span>24H: {data?.btcChange ?? 0}%</span>
+        <p>24H CHANGE: {data?.btcChange ?? 0}%</p>
+      </div>
+
+      {/* NEWS */}
+      <div className="news">
+        <h3>MARKET NEWS</h3>
+        {news.map((n, i) => (
+          <div key={i} className={`news-item ${n.direction}`}>
+            <b>{n.title}</b>
+            <span>{n.impact} IMPACT</span>
+          </div>
+        ))}
       </div>
 
       {/* FILTER */}
@@ -135,76 +180,66 @@ export default function Page() {
         <button onClick={loadHistory}>HISTORY</button>
       </div>
 
-      {/* MARKET */}
+      {/* MARKET GRID */}
       <div className="grid">
         {filteredCoins.map((c: any, i: number) => (
           <div className="coin" key={i}>
 
             <div className="coin-head">
-              <b>{c.pair || "UNKNOWN"}</b>
+              <b>{c.pair}</b>
               <span className={c.signal}>{c.signal}</span>
             </div>
 
-            <div>Price: {c.price}</div>
-
-            <div className="tp">
-              <div>TP1: {c.tp1}</div>
-              <div>TP2: {c.tp2}</div>
-              <div>SL: {c.sl}</div>
+            <div className="price">
+              PRICE: {c.price}
             </div>
 
-            <div className="actions">
-              <button
-                className="buy"
-                disabled={loading}
-                onClick={() => addPortfolio(c)}
-              >
-                BUY
-              </button>
-
-              <button
-                className="ghost"
-                onClick={() =>
-                  alert(
-                    `${c.pair}\nPRICE:${c.price}\nTP1:${c.tp1}\nTP2:${c.tp2}\nSL:${c.sl}`
-                  )
-                }
-              >
-                DETAIL
-              </button>
+            <div className="metrics">
+              <div>WHALE SCORE: {c.whale_score}</div>
+              <div>MOMENTUM: {c.momentum_score}</div>
+              <div>CONFIDENCE: {c.confidence}%</div>
+              <div>RISK: {c.risk_score}</div>
             </div>
+
+            <button
+              disabled={loading}
+              onClick={() => addPortfolio(c)}
+              className="buy"
+            >
+              BUY
+            </button>
 
           </div>
         ))}
       </div>
 
       {/* PORTFOLIO */}
-      <h3 className="section">PORTFOLIO</h3>
+      <h3>PORTFOLIO</h3>
 
       <div className="list">
         {portfolio.map((p: any) => (
-          <div className="item" key={p.id}>
+          <div key={p.id} className="item">
+
             <div>
               <b>{p.pair}</b>
               <small>ENTRY: {p.entry_price}</small>
-              <small>TP1: {p.tp1}</small>
-              <small>SL: {p.sl}</small>
+              <small>PNL: {p.pnl}</small>
             </div>
 
-            <button onClick={() => deletePortfolio(p.id)}>
-              DELETE
+            <button onClick={() => sellPortfolio(p.id)}>
+              SELL
             </button>
+
           </div>
         ))}
       </div>
 
       {/* HISTORY */}
-      <h3 className="section">HISTORY</h3>
-
+      <h3>HISTORY</h3>
       <div className="history">
         {history.slice(0, 10).map((h: any, i: number) => (
           <div key={i}>
-            {h.pair} | {h.signal} | {h.score}
+            {h.pair} | {h.signal} | SCORE: {h.score}
           </div>
         ))}
       </div>
@@ -212,7 +247,7 @@ export default function Page() {
       {/* STYLE */}
       <style jsx>{`
         .dashboard {
-          background: #050816;
+          background: #0b1020;
           color: white;
           min-height: 100vh;
           padding: 20px;
@@ -224,8 +259,19 @@ export default function Page() {
           justify-content: space-between;
         }
 
-        .status.on { background: #16a34a; padding:6px 12px; border-radius:20px; }
-        .status.off { background: #dc2626; padding:6px 12px; border-radius:20px; }
+        .status.on { background: #16a34a; padding:6px 10px; border-radius:20px; }
+        .status.off { background: #dc2626; padding:6px 10px; border-radius:20px; }
+
+        .warning {
+          margin-top: 15px;
+          padding: 12px;
+          border-radius: 10px;
+          font-size: 14px;
+        }
+
+        .warning.BULLISH { background: #052e16; }
+        .warning.BEARISH { background: #450a0a; }
+        .warning.SIDEWAYS { background: #1e293b; }
 
         .grid {
           display: grid;
@@ -248,30 +294,26 @@ export default function Page() {
         .BUY { color: #22c55e; }
         .SELL { color: #ef4444; }
 
-        .actions {
-          display: flex;
-          gap: 8px;
-          margin-top: 10px;
-        }
-
-        .buy {
-          background: #16a34a;
-          color: white;
-        }
-
-        .ghost {
-          background: #334155;
-          color: white;
-        }
-
         .list .item {
           display: flex;
           justify-content: space-between;
-          margin-top: 8px;
-          padding: 10px;
           background: #0f172a;
+          padding: 10px;
+          margin-top: 8px;
           border-radius: 8px;
         }
+
+        .news-item {
+          padding: 8px;
+          margin-top: 6px;
+          background: #111827;
+          border-radius: 6px;
+          display: flex;
+          justify-content: space-between;
+        }
+
+        .BULLISH { border-left: 4px solid #22c55e; }
+        .BEARISH { border-left: 4px solid #ef4444; }
       `}</style>
 
     </div>
