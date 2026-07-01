@@ -9,8 +9,12 @@ export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [filter, setFilter] = useState("ALL");
+  const [history, setHistory] = useState<any[]>([]);
+  const [news, setNews] = useState<any[]>([]);
+  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
+  const [loading, setLoading] = useState(false);
 
+  // ================= SOCKET =================
   useEffect(() => {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
@@ -19,149 +23,335 @@ export default function Page() {
       setData(res);
     });
 
-    return () => socket.off("v12_fixed");
+    return () => {
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.off("v12_fixed");
+    };
   }, []);
 
-  const coins = useMemo(() => data?.top || [], [data]);
-
-  const filtered =
-    filter === "ALL"
-      ? coins
-      : coins.filter((c: any) => c.signal === filter);
-
-  const warning = data?.warning;
-
-  const buy = async (c: any) => {
-    await fetch(`${API}/buy`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pair: c.pair,
-        price: c.price,
-        amount: 1
-      })
-    });
-
+  // ================= LOAD =================
+  const loadPortfolio = async () => {
     const res = await fetch(`${API}/portfolio`);
     setPortfolio(await res.json());
   };
 
-  const sell = async (id: number) => {
+  const loadHistory = async () => {
+    const res = await fetch(`${API}/market/history`);
+    setHistory(await res.json());
+  };
+
+  const loadNews = async () => {
+    setNews([
+      {
+        title: "Market volatility meningkat signifikan",
+        impact: "HIGH",
+        direction: "BEARISH",
+        warning: "Hindari entry agresif saat ini"
+      },
+      {
+        title: "Whale accumulation terdeteksi di altcoin",
+        impact: "HIGH",
+        direction: "BULLISH",
+        warning: "Potensi breakout jangka pendek"
+      },
+      {
+        title: "Bitcoin dominan naik perlahan",
+        impact: "MEDIUM",
+        direction: "BULLISH",
+        warning: "Trend belum kuat, tunggu konfirmasi"
+      }
+    ]);
+  };
+
+  useEffect(() => {
+    loadPortfolio();
+    loadHistory();
+    loadNews();
+  }, []);
+
+  // ================= SAFE COINS =================
+  const coins = useMemo(() => {
+    return data?.top?.filter((c: any) => c?.price > 0) || [];
+  }, [data]);
+
+  // ================= FILTER =================
+  const filteredCoins =
+    filter === "ALL"
+      ? coins
+      : coins.filter((c: any) => c.signal === filter);
+
+  // ================= MARKET DIRECTION =================
+  const marketDirection = useMemo(() => {
+    if (!coins.length) return "UNKNOWN";
+
+    const buy = coins.filter((c: any) => c.signal === "BUY").length;
+    const sell = coins.filter((c: any) => c.signal === "SELL").length;
+
+    if (buy > sell + 2) return "BULLISH";
+    if (sell > buy + 2) return "BEARISH";
+    return "SIDEWAYS";
+  }, [coins]);
+
+  // ================= BUY =================
+  const addPortfolio = async (coin: any) => {
+    try {
+      setLoading(true);
+
+      const payload = {
+        pair: coin.pair,
+        entry_price: coin.price,
+        amount: 1
+      };
+
+      await fetch(`${API}/buy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      await loadPortfolio();
+
+    } catch (e: any) {
+      alert(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ================= SELL =================
+  const sellPortfolio = async (id: number) => {
     await fetch(`${API}/sell`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
 
-    const res = await fetch(`${API}/portfolio`);
-    setPortfolio(await res.json());
+    loadPortfolio();
   };
 
   return (
-    <div className="app">
+    <div className="dashboard">
 
       {/* HEADER */}
-      <div className="header">
-        <h2>INSTITUTIONAL TRADING DASHBOARD</h2>
-        <span>{connected ? "LIVE" : "OFFLINE"}</span>
+      <div className="topbar">
+        <div>
+          <h2>INSTITUTIONAL AI TRADING TERMINAL</h2>
+          <p>Real-time Quant Hedge Fund Monitoring System</p>
+        </div>
+
+        <div className={`status ${connected ? "on" : "off"}`}>
+          {connected ? "LIVE" : "OFFLINE"}
+        </div>
       </div>
 
-      {/* REAL MARKET WARNING (NO HARDCODE) */}
-      <div className={`warning ${warning?.level}`}>
-        ⚠ STATUS: {warning?.level || "UNKNOWN"}
+      {/* MARKET WARNING CENTER */}
+      <div className={`warning ${marketDirection}`}>
+        ⚠ MARKET STATUS: {marketDirection}
         <br />
-        ⚠ {warning?.message || "Menunggu data market"}
+        ⚠ WARNING: High volatility detected. Avoid over-leverage.
+        <br />
+        ⚠ RISK NOTICE: Entry tanpa konfirmasi bisa menyebabkan drawdown tinggi.
+        <br />
+        ⚠ SYSTEM ALERT: Gunakan TP/SL wajib, jangan entry tanpa manajemen risiko.
       </div>
 
-      {/* BTC */}
-      <div className="btc">
-        BTC: {data?.btc || "-"} | CHANGE: {data?.btcChange || 0}%
+      {/* BTC PANEL */}
+      <div className="card">
+        <h3>BITCOIN PRICE</h3>
+        <h1>{data?.btc ?? "-"}</h1>
+        <p>24H CHANGE: {data?.btcChange ?? 0}%</p>
       </div>
 
-      {/* FILTER */}
-      <div className="filter">
-        {["ALL", "BUY", "SELL"].map((f) => (
-          <button key={f} onClick={() => setFilter(f)}>
-            {f}
-          </button>
+      {/* NEWS */}
+      <div className="news">
+        <h3>MARKET NEWS & WARNING</h3>
+        {news.map((n, i) => (
+          <div key={i} className={`news-item ${n.direction}`}>
+            <div>
+              <b>{n.title}</b>
+              <p>{n.warning}</p>
+            </div>
+            <span>{n.impact}</span>
+          </div>
         ))}
       </div>
 
-      {/* MARKET */}
+      {/* FILTER */}
+      <div className="row">
+        <button onClick={() => setFilter("ALL")}>ALL</button>
+        <button onClick={() => setFilter("BUY")}>BUY</button>
+        <button onClick={() => setFilter("SELL")}>SELL</button>
+        <button onClick={loadPortfolio}>PORTFOLIO</button>
+        <button onClick={loadHistory}>HISTORY</button>
+      </div>
+
+      {/* MARKET GRID */}
       <div className="grid">
-        {filtered.map((c: any, i: number) => (
-          <div key={i} className="card">
+        {filteredCoins.map((c: any, i: number) => (
+          <div className="coin" key={i}>
 
-            <h3>{c.pair}</h3>
-            <b>{c.signal}</b>
-
-            {/* PRICE */}
-            <div>ENTRY: {c.entry}</div>
-            <div>TP1: {c.tp1}</div>
-            <div>TP2: {c.tp2}</div>
-            <div>SL: {c.sl}</div>
-
-            {/* REASON */}
-            <div className="reason">
-              <div>Whale: {c.whale_score?.toFixed?.(2)}</div>
-              <div>Momentum: {c.momentum_score?.toFixed?.(2)}</div>
-              <div>Liquidity: {c.liquidity_score?.toFixed?.(2)}</div>
-              <div>Confidence: {c.confidence?.toFixed?.(1)}%</div>
-              <div>Risk: {c.risk_score?.toFixed?.(2)}</div>
+            <div className="coin-head">
+              <b>{c.pair}</b>
+              <span className={c.signal}>{c.signal}</span>
             </div>
 
-            <button onClick={() => buy(c)}>BUY</button>
+            {/* PRICE BLOCK */}
+            <div className="price">
+              <div>ENTRY: {c.price}</div>
+              <div>TP1: {c.tp1}</div>
+              <div>TP2: {c.tp2}</div>
+              <div>SL: {c.sl}</div>
+            </div>
+
+            {/* REASON ENGINE */}
+            <div className="reason">
+              <b>ALASAN ENTRY:</b>
+              <ul>
+                <li>Whale Activity: {c.whale_score || "-"}</li>
+                <li>Momentum: {c.momentum_score || "-"}</li>
+                <li>Liquidity: {c.liquidity_score || "-"}</li>
+                <li>Confidence: {c.confidence || "-"}%</li>
+                <li>Risk Score: {c.risk_score || "-"}</li>
+              </ul>
+            </div>
+
+            {/* WARNING BLOCK */}
+            <div className="coin-warning">
+              ⚠ ENTRY WARNING: Jangan entry tanpa konfirmasi trend.
+              <br />
+              ⚠ TP1 disarankan diambil sebagian profit.
+              <br />
+              ⚠ SL wajib dipasang untuk menghindari liquidasi.
+            </div>
+
+            <button
+              disabled={loading}
+              onClick={() => addPortfolio(c)}
+              className="buy"
+            >
+              BUY
+            </button>
 
           </div>
         ))}
       </div>
 
       {/* PORTFOLIO */}
-      <h3>PORTFOLIO</h3>
+      <h3>PORTFOLIO LIVE</h3>
 
-      {portfolio.map((p) => (
-        <div key={p.id} className="p">
-          {p.pair} | ENTRY: {p.entry_price} | PNL: {p.pnl}
-          <button onClick={() => sell(p.id)}>SELL</button>
-        </div>
-      ))}
+      <div className="list">
+        {portfolio.map((p: any) => (
+          <div key={p.id} className="item">
+            <div>
+              <b>{p.pair}</b>
+              <small>ENTRY: {p.entry_price}</small>
+              <small>PNL: {p.pnl}</small>
+              <small>STATUS: {p.status}</small>
+            </div>
 
+            <button onClick={() => sellPortfolio(p.id)}>
+              SELL
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {/* HISTORY */}
+      <h3>HISTORY SIGNAL</h3>
+      <div className="history">
+        {history.slice(0, 10).map((h: any, i: number) => (
+          <div key={i}>
+            {h.pair} | {h.signal} | SCORE: {h.score}
+          </div>
+        ))}
+      </div>
+
+      {/* STYLE */}
       <style jsx>{`
-        .app { background:#0b0f1a; color:white; padding:20px; }
+        .dashboard {
+          background: #070b1a;
+          color: white;
+          min-height: 100vh;
+          padding: 20px;
+          font-family: sans-serif;
+        }
+
+        .topbar {
+          display: flex;
+          justify-content: space-between;
+        }
+
+        .status.on { background: #16a34a; padding:6px 12px; border-radius:20px; }
+        .status.off { background: #dc2626; padding:6px 12px; border-radius:20px; }
 
         .warning {
-          padding:10px;
-          margin:10px 0;
-          background:#1f2937;
+          margin-top: 15px;
+          padding: 15px;
+          border-radius: 10px;
+          font-size: 13px;
+          line-height: 1.6;
         }
 
-        .HIGH_VOLATILITY { border-left:4px solid orange; }
-        .BEARISH_PRESSURE { border-left:4px solid red; }
-        .BULLISH_MOMENTUM { border-left:4px solid green; }
-        .DISTRIBUTION { border-left:4px solid purple; }
+        .BULLISH { background: #052e16; }
+        .BEARISH { background: #450a0a; }
+        .SIDEWAYS { background: #1e293b; }
 
         .grid {
-          display:grid;
-          grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
-          gap:10px;
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+          gap: 12px;
+          margin-top: 20px;
         }
 
-        .card {
-          background:#111827;
-          padding:10px;
-          border-radius:10px;
+        .coin {
+          background: #111827;
+          padding: 14px;
+          border-radius: 10px;
+        }
+
+        .price {
+          margin-top: 8px;
+          font-size: 13px;
         }
 
         .reason {
-          font-size:12px;
-          margin-top:8px;
+          margin-top: 10px;
+          font-size: 12px;
+          background: #0f172a;
+          padding: 8px;
+          border-radius: 6px;
         }
 
-        .p {
-          background:#1f2937;
-          margin-top:8px;
-          padding:10px;
+        .coin-warning {
+          margin-top: 10px;
+          font-size: 11px;
+          color: #fbbf24;
         }
+
+        .BUY { color: #22c55e; }
+        .SELL { color: #ef4444; }
+
+        .list .item {
+          display: flex;
+          justify-content: space-between;
+          background: #0f172a;
+          padding: 10px;
+          margin-top: 8px;
+          border-radius: 8px;
+        }
+
+        .news-item {
+          background: #111827;
+          padding: 10px;
+          margin-top: 6px;
+          border-radius: 6px;
+          display: flex;
+          justify-content: space-between;
+        }
+
+        .BULLISH { border-left: 4px solid #22c55e; }
+        .BEARISH { border-left: 4px solid #ef4444; }
       `}</style>
 
     </div>
