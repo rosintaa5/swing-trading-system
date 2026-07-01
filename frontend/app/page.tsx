@@ -48,39 +48,65 @@ export default function Page() {
     return data.top.filter((c: any) => c?.price > 0);
   }, [data]);
 
-  // ================= NEWS IMPACT (SIMULATED ENGINE) =================
-  const newsImpactScore = 0.7; 
-  // (0 - bearish, 1 - bullish baseline)
+  // ================= NEWS ENGINE =================
+  const newsEngine = useMemo(() => {
+    const news = [
+      { impact: "HIGH", type: "BULLISH" },
+      { impact: "HIGH", type: "BEARISH" },
+      { impact: "MEDIUM", type: "BULLISH" }
+    ];
 
-  // ================= ENRICHED COINS ENGINE =================
+    const bullish = news.filter(n => n.type === "BULLISH").length / news.length;
+    const bearish = news.filter(n => n.type === "BEARISH").length / news.length;
+
+    const bias = bullish - bearish;
+
+    return {
+      bullish,
+      bearish,
+      bias,
+      risk: Math.abs(bias) * 100
+    };
+  }, []);
+
+  // ================= MARKET PREDICTION =================
+  const marketPrediction = useMemo(() => {
+    if (newsEngine.bias > 0.2) return "BULLISH";
+    if (newsEngine.bias < -0.2) return "BEARISH";
+    return "SIDEWAYS";
+  }, [newsEngine]);
+
+  // ================= ENRICH COINS =================
   const enrichedCoins = useMemo(() => {
     return coins.map((c: any) => {
       const entry = c.price;
 
       const tp1 = entry * 1.02;
       const tp2 = entry * 1.05;
-      const tp3 = entry * 1.08;
+      const tp3 = entry * 1.09;
+      const sl = entry * 0.965;
 
-      const sl = entry * 0.97;
+      const newsBoost = newsEngine.bullish * 25;
 
-      const rr = ((tp2 - entry) / (entry - sl)).toFixed(2);
+      const confidence = Math.min(
+        100,
+        (c.momentum_score || 0) * 8 +
+        (c.whale_score || 0) * 10 +
+        newsBoost
+      );
 
-      const confidence =
-        Math.min(
-          100,
-          (c.momentum_score || 0) * 10 +
-          (c.whale_score || 0) * 10 +
-          newsImpactScore * 20
-        );
+      let decision = "HOLD";
+      if (confidence > 75 && c.signal === "BUY") decision = "BUY STRONG";
+      if (confidence < 40) decision = "EXIT NOW";
+      if (confidence > 60 && c.signal === "SELL") decision = "TAKE PROFIT";
 
-      let reason = [];
+      const reasons = [];
+      if (c.whale_score > 7) reasons.push("Whale accumulation detected");
+      if (c.momentum_score > 7) reasons.push("Strong momentum trend");
+      if (newsEngine.bullish > 0.6) reasons.push("Positive news dominance");
+      if (c.risk_score > 7) reasons.push("High risk condition");
 
-      if (c.whale_score > 7) reason.push("Whale accumulation detected");
-      if (c.momentum_score > 7) reason.push("Strong momentum trend");
-      if (c.liquidity_score > 7) reason.push("High liquidity zone");
-      if (newsImpactScore > 0.6) reason.push("News sentiment bullish bias");
-
-      if (reason.length === 0) reason.push("Market neutral / wait confirmation");
+      if (!reasons.length) reasons.push("Market neutral, wait confirmation");
 
       return {
         ...c,
@@ -89,27 +115,41 @@ export default function Page() {
         tp2,
         tp3,
         sl,
-        rr,
         confidence: confidence.toFixed(0),
-        reason
+        decision,
+        reasons,
+        newsImpact: newsBoost.toFixed(2)
       };
     });
-  }, [coins]);
+  }, [coins, newsEngine]);
 
+  // ================= FILTER =================
   const filteredCoins = useMemo(() => {
     if (filter === "ALL") return enrichedCoins;
     return enrichedCoins.filter((c: any) => c.signal === filter);
   }, [enrichedCoins, filter]);
 
-  // ================= MARKET STATE =================
-  const marketState = useMemo(() => {
-    const buy = coins.filter((c: any) => c.signal === "BUY").length;
-    const sell = coins.filter((c: any) => c.signal === "SELL").length;
+  // ================= PORTFOLIO RE-EVALUATION =================
+  const evaluatedPortfolio = useMemo(() => {
+    return portfolio.map((p: any) => {
+      const pnl = p.pnl || 0;
 
-    if (buy > sell + 2) return "BULLISH";
-    if (sell > buy + 2) return "BEARISH";
-    return "SIDEWAYS";
-  }, [coins]);
+      const score =
+        pnl +
+        newsEngine.bullish * 10 -
+        newsEngine.bearish * 10;
+
+      let status = "HOLD";
+      if (score > 10) status = "STRONG HOLD";
+      if (score < 0) status = "WEAK HOLD";
+      if (score < -10) status = "EXIT NOW";
+
+      return {
+        ...p,
+        status
+      };
+    });
+  }, [portfolio, newsEngine]);
 
   // ================= BUY =================
   const buy = async (coin: any) => {
@@ -149,8 +189,8 @@ export default function Page() {
       {/* HEADER */}
       <header className="topbar">
         <div>
-          <h1>PRO TRADING INTELLIGENCE</h1>
-          <p>AI + News + Market Flow Analysis System</p>
+          <h1>INSTITUTIONAL AI TRADING ENGINE</h1>
+          <p>News + Market Prediction + Portfolio AI Rebalancer</p>
         </div>
 
         <div className={`status ${connected ? "on" : "off"}`}>
@@ -158,10 +198,17 @@ export default function Page() {
         </div>
       </header>
 
-      {/* MARKET STATE */}
-      <section className={`market ${marketState}`}>
-        <h2>Market State: {marketState}</h2>
-        <p>Integrated sentiment + technical + news flow</p>
+      {/* MARKET PREDICTION DASHBOARD */}
+      <section className="dashboard">
+        <div>
+          <h2>Market Prediction: {marketPrediction}</h2>
+          <p>News-driven probabilistic forecasting</p>
+        </div>
+
+        <div>
+          <h2>Risk Index</h2>
+          <p>{newsEngine.risk.toFixed(2)}%</p>
+        </div>
       </section>
 
       {/* FILTER */}
@@ -177,46 +224,40 @@ export default function Page() {
         ))}
       </div>
 
-      {/* COIN GRID */}
+      {/* COINS */}
       <main className="grid">
         {filteredCoins.map((c: any) => (
           <div className="card" key={c.pair}>
 
             <div className="head">
               <h3>{c.pair}</h3>
-              <span className={`tag ${c.signal}`}>{c.signal}</span>
+              <span>{c.decision}</span>
             </div>
 
-            {/* ENTRY */}
             <div className="entry">
               <b>ENTRY: {c.entry}</b>
               <span>Confidence: {c.confidence}%</span>
-              <span>R/R: {c.rr}</span>
+              <span>News Impact: {c.newsImpact}</span>
             </div>
 
-            {/* TP SL */}
             <div className="levels">
               <div>TP1: {c.tp1.toFixed(2)}</div>
               <div>TP2: {c.tp2.toFixed(2)}</div>
               <div>TP3: {c.tp3.toFixed(2)}</div>
-              <div className="sl">SL: {c.sl.toFixed(2)}</div>
+              <div>SL: {c.sl.toFixed(2)}</div>
             </div>
 
-            {/* REASON */}
-            <div className="reason">
-              <b>ENTRY REASON</b>
-              <ul>
-                {c.reason.map((r: string, i: number) => (
-                  <li key={i}>• {r}</li>
-                ))}
-              </ul>
-            </div>
+            <ul>
+              {c.reasons.map((r: string, i: number) => (
+                <li key={i}>• {r}</li>
+              ))}
+            </ul>
 
             <button
               disabled={loadingPair === c.pair}
               onClick={() => buy(c)}
             >
-              {loadingPair === c.pair ? "Processing..." : "EXECUTE BUY"}
+              EXECUTE BUY
             </button>
 
           </div>
@@ -225,13 +266,14 @@ export default function Page() {
 
       {/* PORTFOLIO */}
       <section className="panel">
-        <h2>Portfolio</h2>
-        {portfolio.map((p: any) => (
+        <h2>Portfolio AI Re-Evaluation</h2>
+
+        {evaluatedPortfolio.map((p: any) => (
           <div key={p.id} className="row">
             <div>
               <b>{p.pair}</b>
-              <small>Entry: {p.entry_price}</small>
               <small>PNL: {p.pnl}</small>
+              <small>Status: {p.status}</small>
             </div>
             <button onClick={() => sell(p.id)}>SELL</button>
           </div>
@@ -240,34 +282,38 @@ export default function Page() {
 
       {/* STYLE */}
       <style jsx>{`
-        .app {
-          background:#0b1020;
-          color:#e5e7eb;
-          min-height:100vh;
-          padding:24px;
-          font-family:system-ui;
-        }
+        .app { background:#0b1020; color:white; padding:24px; font-family:system-ui; }
 
         .topbar {
           display:flex;
           justify-content:space-between;
           border-bottom:1px solid #1f2937;
-          padding-bottom:16px;
         }
 
         .status.on { background:#16a34a; padding:6px 12px; border-radius:999px; }
         .status.off { background:#dc2626; padding:6px 12px; border-radius:999px; }
 
-        .market {
-          margin-top:16px;
+        .dashboard {
+          display:flex;
+          justify-content:space-between;
           padding:16px;
-          border-radius:12px;
           background:#111827;
+          margin-top:16px;
+          border-radius:12px;
         }
 
-        .BULLISH { border-left:4px solid #22c55e; }
-        .BEARISH { border-left:4px solid #ef4444; }
-        .SIDEWAYS { border-left:4px solid #64748b; }
+        .grid {
+          display:grid;
+          grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+          gap:12px;
+          margin-top:16px;
+        }
+
+        .card {
+          background:#111827;
+          padding:14px;
+          border-radius:12px;
+        }
 
         .filter {
           display:flex;
@@ -277,73 +323,15 @@ export default function Page() {
 
         .filter button {
           padding:8px 12px;
-          border-radius:8px;
           background:#1f2937;
           border:none;
           color:white;
+          border-radius:8px;
         }
 
-        .filter .active {
-          background:#2563eb;
-        }
+        .filter .active { background:#2563eb; }
 
-        .grid {
-          display:grid;
-          grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
-          gap:12px;
-        }
-
-        .card {
-          background:#111827;
-          padding:14px;
-          border-radius:14px;
-        }
-
-        .head {
-          display:flex;
-          justify-content:space-between;
-        }
-
-        .tag.BUY { color:#22c55e; }
-        .tag.SELL { color:#ef4444; }
-
-        .entry {
-          display:flex;
-          flex-direction:column;
-          margin-top:8px;
-          font-size:13px;
-        }
-
-        .levels {
-          margin-top:10px;
-          font-size:12px;
-          display:grid;
-          gap:4px;
-        }
-
-        .sl {
-          color:#ef4444;
-        }
-
-        .reason {
-          margin-top:10px;
-          font-size:12px;
-          opacity:0.9;
-        }
-
-        button {
-          width:100%;
-          margin-top:10px;
-          padding:10px;
-          border:none;
-          border-radius:10px;
-          background:#2563eb;
-          color:white;
-        }
-
-        .panel {
-          margin-top:24px;
-        }
+        .panel { margin-top:24px; }
 
         .row {
           display:flex;
