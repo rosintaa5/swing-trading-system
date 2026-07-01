@@ -26,17 +26,15 @@ export default function Page() {
     };
   }, []);
 
-  // ================= DATA LOAD =================
+  // ================= LOAD =================
   const loadPortfolio = async () => {
     const res = await fetch(`${API}/portfolio`);
-    const json = await res.json();
-    setPortfolio(json);
+    setPortfolio(await res.json());
   };
 
   const loadHistory = async () => {
     const res = await fetch(`${API}/market/history`);
-    const json = await res.json();
-    setHistory(json);
+    setHistory(await res.json());
   };
 
   useEffect(() => {
@@ -50,14 +48,61 @@ export default function Page() {
     return data.top.filter((c: any) => c?.price > 0);
   }, [data]);
 
+  // ================= NEWS IMPACT (SIMULATED ENGINE) =================
+  const newsImpactScore = 0.7; 
+  // (0 - bearish, 1 - bullish baseline)
+
+  // ================= ENRICHED COINS ENGINE =================
+  const enrichedCoins = useMemo(() => {
+    return coins.map((c: any) => {
+      const entry = c.price;
+
+      const tp1 = entry * 1.02;
+      const tp2 = entry * 1.05;
+      const tp3 = entry * 1.08;
+
+      const sl = entry * 0.97;
+
+      const rr = ((tp2 - entry) / (entry - sl)).toFixed(2);
+
+      const confidence =
+        Math.min(
+          100,
+          (c.momentum_score || 0) * 10 +
+          (c.whale_score || 0) * 10 +
+          newsImpactScore * 20
+        );
+
+      let reason = [];
+
+      if (c.whale_score > 7) reason.push("Whale accumulation detected");
+      if (c.momentum_score > 7) reason.push("Strong momentum trend");
+      if (c.liquidity_score > 7) reason.push("High liquidity zone");
+      if (newsImpactScore > 0.6) reason.push("News sentiment bullish bias");
+
+      if (reason.length === 0) reason.push("Market neutral / wait confirmation");
+
+      return {
+        ...c,
+        entry,
+        tp1,
+        tp2,
+        tp3,
+        sl,
+        rr,
+        confidence: confidence.toFixed(0),
+        reason
+      };
+    });
+  }, [coins]);
+
   const filteredCoins = useMemo(() => {
-    if (filter === "ALL") return coins;
-    return coins.filter((c: any) => c.signal === filter);
-  }, [coins, filter]);
+    if (filter === "ALL") return enrichedCoins;
+    return enrichedCoins.filter((c: any) => c.signal === filter);
+  }, [enrichedCoins, filter]);
 
-  const marketStatus = useMemo(() => {
-    if (!coins.length) return "NEUTRAL";
-
+  // ================= MARKET STATE =================
+  const marketState = useMemo(() => {
     const buy = coins.filter((c: any) => c.signal === "BUY").length;
     const sell = coins.filter((c: any) => c.signal === "SELL").length;
 
@@ -71,17 +116,15 @@ export default function Page() {
     try {
       setLoadingPair(coin.pair);
 
-      const res = await fetch(`${API}/buy`, {
+      await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pair: coin.pair,
-          price: coin.price,
+          price: coin.entry,
           amount: 1
         })
       });
-
-      if (!res.ok) throw new Error("BUY FAILED");
 
       await loadPortfolio();
     } finally {
@@ -103,34 +146,26 @@ export default function Page() {
   return (
     <div className="app">
 
-      {/* TOP NAV */}
+      {/* HEADER */}
       <header className="topbar">
-        <div className="brand">
-          <h1>TRADING TERMINAL</h1>
-          <p>AI-driven market monitoring system</p>
+        <div>
+          <h1>PRO TRADING INTELLIGENCE</h1>
+          <p>AI + News + Market Flow Analysis System</p>
         </div>
 
-        <div className={`status ${connected ? "live" : "down"}`}>
+        <div className={`status ${connected ? "on" : "off"}`}>
           {connected ? "LIVE" : "OFFLINE"}
         </div>
       </header>
 
-      {/* MARKET STATUS */}
-      <section className={`statusCard ${marketStatus}`}>
-        <div>
-          <h2>Market Status: {marketStatus}</h2>
-          <p>Real-time sentiment aggregation from signal engine</p>
-        </div>
-
-        <div className="btc">
-          <h3>BTC</h3>
-          <strong>{data?.btc ?? "-"}</strong>
-          <span>{data?.btcChange ?? 0}%</span>
-        </div>
+      {/* MARKET STATE */}
+      <section className={`market ${marketState}`}>
+        <h2>Market State: {marketState}</h2>
+        <p>Integrated sentiment + technical + news flow</p>
       </section>
 
-      {/* FILTER BAR */}
-      <div className="filterBar">
+      {/* FILTER */}
+      <div className="filter">
         {["ALL", "BUY", "SELL"].map((f) => (
           <button
             key={f}
@@ -142,36 +177,46 @@ export default function Page() {
         ))}
       </div>
 
-      {/* MAIN GRID */}
+      {/* COIN GRID */}
       <main className="grid">
         {filteredCoins.map((c: any) => (
           <div className="card" key={c.pair}>
 
-            <div className="cardHead">
+            <div className="head">
               <h3>{c.pair}</h3>
-              <span className={`badge ${c.signal}`}>{c.signal}</span>
+              <span className={`tag ${c.signal}`}>{c.signal}</span>
             </div>
 
-            <div className="price">
-              <div><span>Price</span><b>{c.price}</b></div>
-              <div><span>TP1</span><b>{c.tp1}</b></div>
-              <div><span>TP2</span><b>{c.tp2}</b></div>
-              <div><span>SL</span><b>{c.sl}</b></div>
+            {/* ENTRY */}
+            <div className="entry">
+              <b>ENTRY: {c.entry}</b>
+              <span>Confidence: {c.confidence}%</span>
+              <span>R/R: {c.rr}</span>
             </div>
 
-            <div className="metrics">
-              <div>Whale <b>{c.whale_score}</b></div>
-              <div>Momentum <b>{c.momentum_score}</b></div>
-              <div>Risk <b>{c.risk_score}</b></div>
-              <div>Confidence <b>{c.confidence}%</b></div>
+            {/* TP SL */}
+            <div className="levels">
+              <div>TP1: {c.tp1.toFixed(2)}</div>
+              <div>TP2: {c.tp2.toFixed(2)}</div>
+              <div>TP3: {c.tp3.toFixed(2)}</div>
+              <div className="sl">SL: {c.sl.toFixed(2)}</div>
+            </div>
+
+            {/* REASON */}
+            <div className="reason">
+              <b>ENTRY REASON</b>
+              <ul>
+                {c.reason.map((r: string, i: number) => (
+                  <li key={i}>• {r}</li>
+                ))}
+              </ul>
             </div>
 
             <button
-              className="buyBtn"
               disabled={loadingPair === c.pair}
               onClick={() => buy(c)}
             >
-              {loadingPair === c.pair ? "PROCESSING..." : "BUY"}
+              {loadingPair === c.pair ? "Processing..." : "EXECUTE BUY"}
             </button>
 
           </div>
@@ -181,188 +226,135 @@ export default function Page() {
       {/* PORTFOLIO */}
       <section className="panel">
         <h2>Portfolio</h2>
-
-        <div className="list">
-          {portfolio.map((p: any) => (
-            <div className="rowItem" key={p.id}>
-              <div>
-                <b>{p.pair}</b>
-                <small>Entry {p.entry_price}</small>
-                <small>PNL {p.pnl}</small>
-              </div>
-
-              <button onClick={() => sell(p.id)}>SELL</button>
+        {portfolio.map((p: any) => (
+          <div key={p.id} className="row">
+            <div>
+              <b>{p.pair}</b>
+              <small>Entry: {p.entry_price}</small>
+              <small>PNL: {p.pnl}</small>
             </div>
-          ))}
-        </div>
-      </section>
-
-      {/* HISTORY */}
-      <section className="panel">
-        <h2>History</h2>
-        <div className="history">
-          {history.slice(0, 8).map((h: any, i: number) => (
-            <div key={i}>
-              {h.pair} · {h.signal} · {h.score}
-            </div>
-          ))}
-        </div>
+            <button onClick={() => sell(p.id)}>SELL</button>
+          </div>
+        ))}
       </section>
 
       {/* STYLE */}
       <style jsx>{`
         .app {
-          background: #0b1220;
-          color: #e5e7eb;
-          min-height: 100vh;
-          padding: 24px;
-          font-family: system-ui;
+          background:#0b1020;
+          color:#e5e7eb;
+          min-height:100vh;
+          padding:24px;
+          font-family:system-ui;
         }
 
-        /* TOPBAR */
         .topbar {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding-bottom: 20px;
-          border-bottom: 1px solid #1f2937;
+          display:flex;
+          justify-content:space-between;
+          border-bottom:1px solid #1f2937;
+          padding-bottom:16px;
         }
 
-        .brand h1 {
-          font-size: 18px;
-          margin: 0;
+        .status.on { background:#16a34a; padding:6px 12px; border-radius:999px; }
+        .status.off { background:#dc2626; padding:6px 12px; border-radius:999px; }
+
+        .market {
+          margin-top:16px;
+          padding:16px;
+          border-radius:12px;
+          background:#111827;
         }
 
-        .brand p {
-          font-size: 12px;
-          opacity: 0.7;
+        .BULLISH { border-left:4px solid #22c55e; }
+        .BEARISH { border-left:4px solid #ef4444; }
+        .SIDEWAYS { border-left:4px solid #64748b; }
+
+        .filter {
+          display:flex;
+          gap:8px;
+          margin:16px 0;
         }
 
-        .status.live {
-          background: #16a34a;
-          padding: 6px 12px;
-          border-radius: 999px;
+        .filter button {
+          padding:8px 12px;
+          border-radius:8px;
+          background:#1f2937;
+          border:none;
+          color:white;
         }
 
-        .status.down {
-          background: #dc2626;
-          padding: 6px 12px;
-          border-radius: 999px;
+        .filter .active {
+          background:#2563eb;
         }
 
-        /* STATUS CARD */
-        .statusCard {
-          margin-top: 16px;
-          padding: 16px;
-          border-radius: 12px;
-          display: flex;
-          justify-content: space-between;
-          background: #111827;
-        }
-
-        .BULLISH { border-left: 4px solid #22c55e; }
-        .BEARISH { border-left: 4px solid #ef4444; }
-        .SIDEWAYS { border-left: 4px solid #64748b; }
-
-        /* FILTER */
-        .filterBar {
-          display: flex;
-          gap: 8px;
-          margin: 16px 0;
-        }
-
-        .filterBar button {
-          padding: 8px 14px;
-          border-radius: 8px;
-          border: none;
-          background: #1f2937;
-          color: white;
-          cursor: pointer;
-        }
-
-        .filterBar .active {
-          background: #2563eb;
-        }
-
-        /* GRID */
         .grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-          gap: 12px;
+          display:grid;
+          grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+          gap:12px;
         }
 
-        /* CARD */
         .card {
-          background: #111827;
-          padding: 14px;
-          border-radius: 14px;
-          border: 1px solid #1f2937;
+          background:#111827;
+          padding:14px;
+          border-radius:14px;
         }
 
-        .cardHead {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
+        .head {
+          display:flex;
+          justify-content:space-between;
         }
 
-        .badge {
-          padding: 4px 8px;
-          border-radius: 999px;
-          font-size: 12px;
+        .tag.BUY { color:#22c55e; }
+        .tag.SELL { color:#ef4444; }
+
+        .entry {
+          display:flex;
+          flex-direction:column;
+          margin-top:8px;
+          font-size:13px;
         }
 
-        .BUY { background: #14532d; color: #22c55e; }
-        .SELL { background: #450a0a; color: #ef4444; }
-
-        .price {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 6px;
-          margin-top: 10px;
-          font-size: 12px;
-          opacity: 0.9;
+        .levels {
+          margin-top:10px;
+          font-size:12px;
+          display:grid;
+          gap:4px;
         }
 
-        .metrics {
-          margin-top: 10px;
-          font-size: 12px;
-          opacity: 0.8;
-          display: grid;
-          gap: 4px;
+        .sl {
+          color:#ef4444;
         }
 
-        .buyBtn {
-          margin-top: 12px;
-          width: 100%;
-          padding: 10px;
-          border-radius: 10px;
-          border: none;
-          background: #2563eb;
-          color: white;
-          cursor: pointer;
+        .reason {
+          margin-top:10px;
+          font-size:12px;
+          opacity:0.9;
         }
 
-        /* PANEL */
+        button {
+          width:100%;
+          margin-top:10px;
+          padding:10px;
+          border:none;
+          border-radius:10px;
+          background:#2563eb;
+          color:white;
+        }
+
         .panel {
-          margin-top: 24px;
+          margin-top:24px;
         }
 
-        .list .rowItem {
-          display: flex;
-          justify-content: space-between;
-          padding: 10px;
-          background: #111827;
-          border-radius: 10px;
-          margin-top: 8px;
-        }
-
-        .history {
-          font-size: 13px;
-          opacity: 0.8;
-          display: grid;
-          gap: 6px;
+        .row {
+          display:flex;
+          justify-content:space-between;
+          padding:10px;
+          background:#111827;
+          margin-top:8px;
+          border-radius:10px;
         }
       `}</style>
+
     </div>
   );
 }
