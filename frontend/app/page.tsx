@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { socket } from "@/lib/socket";
 
+// FIX: hapus trailing slash (INI WAJIB)
 const API = "https://confident-tranquility-production-ceaa.up.railway.app";
 
 export default function Page() {
@@ -12,7 +13,7 @@ export default function Page() {
   const [history, setHistory] = useState<any[]>([]);
   const [news, setNews] = useState<any[]>([]);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
-  const [loading, setLoading] = useState(false);
+  const [loadingPair, setLoadingPair] = useState<string | null>(null);
 
   // ================= SOCKET =================
   useEffect(() => {
@@ -30,36 +31,52 @@ export default function Page() {
     };
   }, []);
 
-  // ================= LOAD =================
+  // ================= LOAD PORTFOLIO =================
   const loadPortfolio = async () => {
-    const res = await fetch(`${API}/portfolio`);
-    setPortfolio(await res.json());
+    try {
+      const res = await fetch(`${API}/portfolio`);
+      if (!res.ok) return;
+
+      const text = await res.text();
+      setPortfolio(JSON.parse(text));
+    } catch {
+      setPortfolio([]);
+    }
   };
 
+  // ================= LOAD HISTORY (SAFE) =================
   const loadHistory = async () => {
-    const res = await fetch(`${API}/market/history`);
-    setHistory(await res.json());
+    try {
+      const res = await fetch(`${API}/market/history`);
+      if (!res.ok) return;
+
+      const text = await res.text();
+      setHistory(JSON.parse(text));
+    } catch {
+      setHistory([]);
+    }
   };
 
+  // ================= NEWS STATIC =================
   const loadNews = async () => {
     setNews([
       {
         title: "Market volatility meningkat signifikan",
         impact: "HIGH",
         direction: "BEARISH",
-        warning: "Hindari entry agresif saat ini"
+        warning: "Hindari entry agresif"
       },
       {
-        title: "Whale accumulation terdeteksi di altcoin",
+        title: "Whale accumulation terdeteksi",
         impact: "HIGH",
         direction: "BULLISH",
-        warning: "Potensi breakout jangka pendek"
+        warning: "Potensi breakout"
       },
       {
-        title: "Bitcoin dominan naik perlahan",
+        title: "Bitcoin naik perlahan",
         impact: "MEDIUM",
         direction: "BULLISH",
-        warning: "Trend belum kuat, tunggu konfirmasi"
+        warning: "Tunggu konfirmasi"
       }
     ]);
   };
@@ -72,7 +89,8 @@ export default function Page() {
 
   // ================= SAFE COINS =================
   const coins = useMemo(() => {
-    return data?.top?.filter((c: any) => c?.price > 0) || [];
+    if (!data?.top || !Array.isArray(data.top)) return [];
+    return data.top.filter((c: any) => c?.price > 0);
   }, [data]);
 
   // ================= FILTER =================
@@ -93,28 +111,42 @@ export default function Page() {
     return "SIDEWAYS";
   }, [coins]);
 
-  // ================= BUY =================
+  // ================= BUY (FIXED + SAFE PARSE) =================
   const addPortfolio = async (coin: any) => {
     try {
-      setLoading(true);
+      setLoadingPair(coin.pair);
 
       const payload = {
         pair: coin.pair,
-        price: coin.price, // FIXED
+        price: coin.price,
         amount: 1
       };
 
-      await fetch(`${API}/buy`, {
+      const res = await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
+      const text = await res.text();
+
+      let result;
+      try {
+        result = JSON.parse(text);
+      } catch {
+        console.error("NON-JSON RESPONSE:", text);
+        throw new Error("Server error: bukan JSON (cek backend Railway)");
+      }
+
+      if (!res.ok) {
+        throw new Error(result?.error || "BUY FAILED");
+      }
+
       await loadPortfolio();
     } catch (e: any) {
       alert(e.message);
     } finally {
-      setLoading(false);
+      setLoadingPair(null);
     }
   };
 
@@ -136,7 +168,7 @@ export default function Page() {
       <div className="topbar">
         <div>
           <h2>INSTITUTIONAL AI TRADING TERMINAL</h2>
-          <p>Real-time Quant Hedge Fund Monitoring System</p>
+          <p>Real-time Quant System</p>
         </div>
 
         <div className={`status ${connected ? "on" : "off"}`}>
@@ -146,21 +178,19 @@ export default function Page() {
 
       {/* WARNING */}
       <div className={`warning ${marketDirection}`}>
-        ⚠ MARKET STATUS: {marketDirection}
-        <br />
-        ⚠ HIGH RISK ENVIRONMENT DETECTED
+        ⚠ MARKET: {marketDirection}
       </div>
 
-      {/* BTC PANEL */}
+      {/* BTC */}
       <div className="card">
-        <h3>BITCOIN PRICE</h3>
+        <h3>BITCOIN</h3>
         <h1>{data?.btc ?? "-"}</h1>
-        <p>24H CHANGE: {data?.btcChange ?? 0}%</p>
+        <p>24H: {data?.btcChange ?? 0}%</p>
       </div>
 
       {/* NEWS */}
       <div className="news">
-        <h3>MARKET NEWS</h3>
+        <h3>NEWS</h3>
         {news.map((n, i) => (
           <div key={i} className={`news-item ${n.direction}`}>
             <div>
@@ -179,7 +209,7 @@ export default function Page() {
         <button onClick={() => setFilter("SELL")}>SELL</button>
       </div>
 
-      {/* GRID */}
+      {/* COINS */}
       <div className="grid">
         {filteredCoins.map((c: any, i: number) => (
           <div className="coin" key={i}>
@@ -196,7 +226,6 @@ export default function Page() {
             </div>
 
             <div className="reason">
-              <b>ALASAN ENTRY</b>
               <ul>
                 <li>Whale: {c.whale_score}</li>
                 <li>Momentum: {c.momentum_score}</li>
@@ -206,7 +235,10 @@ export default function Page() {
               </ul>
             </div>
 
-            <button disabled={loading} onClick={() => addPortfolio(c)}>
+            <button
+              disabled={loadingPair === c.pair}
+              onClick={() => addPortfolio(c)}
+            >
               BUY
             </button>
           </div>
@@ -236,7 +268,7 @@ export default function Page() {
         ))}
       </div>
 
-      {/* STYLE FIXED */}
+      {/* STYLE */}
       <style jsx>{`
         .dashboard { background:#070b1a; color:white; padding:20px; }
         .topbar { display:flex; justify-content:space-between; }
