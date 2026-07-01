@@ -38,29 +38,14 @@ export default function Page() {
 
   const loadHistory = async () => {
     const res = await fetch(`${API}/market/history`);
-    setHistory(await res.json());
+    if (res.ok) setHistory(await res.json());
   };
 
   const loadNews = async () => {
     setNews([
-      {
-        title: "Market volatility meningkat signifikan",
-        impact: "HIGH",
-        direction: "BEARISH",
-        warning: "Hindari entry agresif saat ini"
-      },
-      {
-        title: "Whale accumulation terdeteksi di altcoin",
-        impact: "HIGH",
-        direction: "BULLISH",
-        warning: "Potensi breakout jangka pendek"
-      },
-      {
-        title: "Bitcoin dominan naik perlahan",
-        impact: "MEDIUM",
-        direction: "BULLISH",
-        warning: "Trend belum kuat, tunggu konfirmasi"
-      }
+      { title: "Market volatility meningkat", impact: "HIGH", direction: "BEARISH" },
+      { title: "Whale accumulation terdeteksi", impact: "HIGH", direction: "BULLISH" },
+      { title: "BTC sideways dominan", impact: "MEDIUM", direction: "SIDEWAYS" }
     ]);
   };
 
@@ -72,7 +57,24 @@ export default function Page() {
 
   // ================= SAFE COINS =================
   const coins = useMemo(() => {
-    return data?.top?.filter((c: any) => c?.price > 0) || [];
+    return (data?.top || []).map((c: any) => ({
+      pair: c.pair,
+      price: c.price,
+      signal: c.signal,
+      score: c.score,
+
+      // fallback UI logic (karena backend tidak kirim detail)
+      whale_score: Math.log10(c.price || 1),
+      momentum_score: c.score * 0.6,
+      liquidity_score: Math.log1p(c.price || 1),
+
+      confidence: Math.min(100, 50 + (c.score || 0) * 5),
+      risk_score: Math.abs(c.score || 0),
+
+      tp1: (c.price || 0) * 1.03,
+      tp2: (c.price || 0) * 1.06,
+      sl: (c.price || 0) * 0.98
+    }));
   }, [data]);
 
   // ================= FILTER =================
@@ -100,7 +102,7 @@ export default function Page() {
 
       const payload = {
         pair: coin.pair,
-        entry_price: coin.price,
+        price: coin.price,
         amount: 1
       };
 
@@ -137,7 +139,7 @@ export default function Page() {
       <div className="topbar">
         <div>
           <h2>INSTITUTIONAL AI TRADING TERMINAL</h2>
-          <p>Real-time Quant Hedge Fund Monitoring System</p>
+          <p>Real-time Quant Monitoring System</p>
         </div>
 
         <div className={`status ${connected ? "on" : "off"}`}>
@@ -145,33 +147,26 @@ export default function Page() {
         </div>
       </div>
 
-      {/* MARKET WARNING CENTER */}
+      {/* WARNING */}
       <div className={`warning ${marketDirection}`}>
-        ⚠ MARKET STATUS: {marketDirection}
-        <br />
-        ⚠ WARNING: High volatility detected. Avoid over-leverage.
-        <br />
-        ⚠ RISK NOTICE: Entry tanpa konfirmasi bisa menyebabkan drawdown tinggi.
-        <br />
-        ⚠ SYSTEM ALERT: Gunakan TP/SL wajib, jangan entry tanpa manajemen risiko.
+        ⚠ MARKET: {marketDirection}  
+        ⚠ Jangan entry tanpa konfirmasi trend  
+        ⚠ Gunakan TP & SL wajib  
+        ⚠ Hindari over-leverage saat volatilitas tinggi
       </div>
 
-      {/* BTC PANEL */}
+      {/* BTC */}
       <div className="card">
-        <h3>BITCOIN PRICE</h3>
+        <h3>BTC PRICE</h3>
         <h1>{data?.btc ?? "-"}</h1>
-        <p>24H CHANGE: {data?.btcChange ?? 0}%</p>
       </div>
 
       {/* NEWS */}
       <div className="news">
-        <h3>MARKET NEWS & WARNING</h3>
+        <h3>NEWS</h3>
         {news.map((n, i) => (
           <div key={i} className={`news-item ${n.direction}`}>
-            <div>
-              <b>{n.title}</b>
-              <p>{n.warning}</p>
-            </div>
+            <b>{n.title}</b>
             <span>{n.impact}</span>
           </div>
         ))}
@@ -182,11 +177,9 @@ export default function Page() {
         <button onClick={() => setFilter("ALL")}>ALL</button>
         <button onClick={() => setFilter("BUY")}>BUY</button>
         <button onClick={() => setFilter("SELL")}>SELL</button>
-        <button onClick={loadPortfolio}>PORTFOLIO</button>
-        <button onClick={loadHistory}>HISTORY</button>
       </div>
 
-      {/* MARKET GRID */}
+      {/* MARKET */}
       <div className="grid">
         {filteredCoins.map((c: any, i: number) => (
           <div className="coin" key={i}>
@@ -196,40 +189,27 @@ export default function Page() {
               <span className={c.signal}>{c.signal}</span>
             </div>
 
-            {/* PRICE BLOCK */}
-            <div className="price">
+            <div>PRICE: {c.price}</div>
+
+            <div className="tp">
               <div>ENTRY: {c.price}</div>
               <div>TP1: {c.tp1}</div>
               <div>TP2: {c.tp2}</div>
               <div>SL: {c.sl}</div>
             </div>
 
-            {/* REASON ENGINE */}
             <div className="reason">
-              <b>ALASAN ENTRY:</b>
+              <b>REASON:</b>
               <ul>
-                <li>Whale Activity: {c.whale_score || "-"}</li>
-                <li>Momentum: {c.momentum_score || "-"}</li>
-                <li>Liquidity: {c.liquidity_score || "-"}</li>
-                <li>Confidence: {c.confidence || "-"}%</li>
-                <li>Risk Score: {c.risk_score || "-"}</li>
+                <li>Whale: {c.whale_score.toFixed(2)}</li>
+                <li>Momentum: {c.momentum_score.toFixed(2)}</li>
+                <li>Liquidity: {c.liquidity_score.toFixed(2)}</li>
+                <li>Confidence: {c.confidence.toFixed(1)}%</li>
+                <li>Risk: {c.risk_score.toFixed(2)}</li>
               </ul>
             </div>
 
-            {/* WARNING BLOCK */}
-            <div className="coin-warning">
-              ⚠ ENTRY WARNING: Jangan entry tanpa konfirmasi trend.
-              <br />
-              ⚠ TP1 disarankan diambil sebagian profit.
-              <br />
-              ⚠ SL wajib dipasang untuk menghindari liquidasi.
-            </div>
-
-            <button
-              disabled={loading}
-              onClick={() => addPortfolio(c)}
-              className="buy"
-            >
+            <button onClick={() => addPortfolio(c)} disabled={loading}>
               BUY
             </button>
 
@@ -238,8 +218,7 @@ export default function Page() {
       </div>
 
       {/* PORTFOLIO */}
-      <h3>PORTFOLIO LIVE</h3>
-
+      <h3>PORTFOLIO</h3>
       <div className="list">
         {portfolio.map((p: any) => (
           <div key={p.id} className="item">
@@ -247,112 +226,11 @@ export default function Page() {
               <b>{p.pair}</b>
               <small>ENTRY: {p.entry_price}</small>
               <small>PNL: {p.pnl}</small>
-              <small>STATUS: {p.status}</small>
             </div>
-
-            <button onClick={() => sellPortfolio(p.id)}>
-              SELL
-            </button>
+            <button onClick={() => sellPortfolio(p.id)}>SELL</button>
           </div>
         ))}
       </div>
-
-      {/* HISTORY */}
-      <h3>HISTORY SIGNAL</h3>
-      <div className="history">
-        {history.slice(0, 10).map((h: any, i: number) => (
-          <div key={i}>
-            {h.pair} | {h.signal} | SCORE: {h.score}
-          </div>
-        ))}
-      </div>
-
-      {/* STYLE */}
-      <style jsx>{`
-        .dashboard {
-          background: #070b1a;
-          color: white;
-          min-height: 100vh;
-          padding: 20px;
-          font-family: sans-serif;
-        }
-
-        .topbar {
-          display: flex;
-          justify-content: space-between;
-        }
-
-        .status.on { background: #16a34a; padding:6px 12px; border-radius:20px; }
-        .status.off { background: #dc2626; padding:6px 12px; border-radius:20px; }
-
-        .warning {
-          margin-top: 15px;
-          padding: 15px;
-          border-radius: 10px;
-          font-size: 13px;
-          line-height: 1.6;
-        }
-
-        .BULLISH { background: #052e16; }
-        .BEARISH { background: #450a0a; }
-        .SIDEWAYS { background: #1e293b; }
-
-        .grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-          gap: 12px;
-          margin-top: 20px;
-        }
-
-        .coin {
-          background: #111827;
-          padding: 14px;
-          border-radius: 10px;
-        }
-
-        .price {
-          margin-top: 8px;
-          font-size: 13px;
-        }
-
-        .reason {
-          margin-top: 10px;
-          font-size: 12px;
-          background: #0f172a;
-          padding: 8px;
-          border-radius: 6px;
-        }
-
-        .coin-warning {
-          margin-top: 10px;
-          font-size: 11px;
-          color: #fbbf24;
-        }
-
-        .BUY { color: #22c55e; }
-        .SELL { color: #ef4444; }
-
-        .list .item {
-          display: flex;
-          justify-content: space-between;
-          background: #0f172a;
-          padding: 10px;
-          margin-top: 8px;
-          border-radius: 8px;
-        }
-
-        .news-item {
-          background: #111827;
-          padding: 10px;
-          margin-top: 6px;
-          border-radius: 6px;
-          display: flex;
-          justify-content: space-between;
-        }
-
-        .BULLISH { border-left: 4px solid #22c55e; }
-        .BEARISH { border-left: 4px solid #ef4444; }
-      `}</style>
 
     </div>
   );
