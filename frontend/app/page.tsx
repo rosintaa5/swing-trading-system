@@ -6,7 +6,7 @@ import { io } from "socket.io-client";
 // ================= BACKEND RAILWAY =================
 const API = "https://confident-tranquility-production-ceaa.up.railway.app";
 
-// socket harus connect ke backend railway, bukan localhost
+// socket connect ke backend
 const socket = io(API, {
   transports: ["websocket", "polling"]
 });
@@ -15,17 +15,14 @@ export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
-  const [news, setNews] = useState<any[]>([]);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
-  const [loading, setLoading] = useState(false);
 
-  // ================= SOCKET CONNECTION =================
+  // ================= SOCKET =================
   useEffect(() => {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    // ⚠️ backend kamu emit ini: v14_engine (bukan v12_fixed)
+    // ⚠️ HARUS SESUAI BACKEND: v14_engine
     socket.on("v14_engine", (res) => {
       setData(res);
     });
@@ -41,109 +38,57 @@ export default function Page() {
   const loadPortfolio = async () => {
     try {
       const res = await fetch(`${API}/portfolio`);
-      setPortfolio(await res.json());
+      const json = await res.json();
+      setPortfolio(json || []);
     } catch {
       setPortfolio([]);
     }
   };
 
-  // ================= LOAD HISTORY (SAFE FALLBACK) =================
-  const loadHistory = async () => {
-    try {
-      const res = await fetch(`${API}/market/history`);
-
-      // backend kamu belum punya endpoint ini → fallback safe
-      if (!res.ok) {
-        setHistory([]);
-        return;
-      }
-
-      setHistory(await res.json());
-
-    } catch {
-      setHistory([]);
-    }
-  };
-
-  // ================= STATIC NEWS =================
-  const loadNews = () => {
-    setNews([
-      {
-        title: "Market volatility meningkat signifikan",
-        impact: "HIGH",
-        direction: "BEARISH",
-        warning: "Hindari entry agresif saat ini"
-      },
-      {
-        title: "Whale accumulation terdeteksi",
-        impact: "HIGH",
-        direction: "BULLISH",
-        warning: "Potensi breakout jangka pendek"
-      },
-      {
-        title: "Bitcoin trend stabil",
-        impact: "MEDIUM",
-        direction: "BULLISH",
-        warning: "Tunggu konfirmasi breakout"
-      }
-    ]);
-  };
-
   useEffect(() => {
     loadPortfolio();
-    loadHistory();
-    loadNews();
   }, []);
 
   // ================= SAFE COINS =================
   const coins = useMemo(() => {
-    return data?.top?.filter((c: any) => c?.price > 0) || [];
+    return Array.isArray(data?.top) ? data.top : [];
   }, [data]);
 
-  // ================= FILTER =================
-  const filteredCoins =
-    filter === "ALL"
-      ? coins
-      : coins.filter((c: any) => c.signal === filter);
+  // ================= FILTER COINS =================
+  const filteredCoins = useMemo(() => {
+    if (filter === "ALL") return coins;
+    return coins.filter((c: any) => c.signal === filter);
+  }, [coins, filter]);
 
-  // ================= MARKET DIRECTION =================
+  // ================= MARKET DIRECTION (FIXED) =================
   const marketDirection = useMemo(() => {
-    if (!coins.length) return "UNKNOWN";
+    if (!coins.length) return "NO DATA";
 
     const buy = coins.filter((c: any) => c.signal === "BUY").length;
     const sell = coins.filter((c: any) => c.signal === "SELL").length;
 
-    if (buy > sell + 2) return "BULLISH";
-    if (sell > buy + 2) return "BEARISH";
+    if (buy > sell) return "BULLISH";
+    if (sell > buy) return "BEARISH";
     return "SIDEWAYS";
   }, [coins]);
 
   // ================= BUY =================
-  const addPortfolio = async (coin: any) => {
-    try {
-      setLoading(true);
+  const buyCoin = async (coin: any) => {
+    await fetch(`${API}/buy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pair: coin.pair,
+        price: coin.price,
+        amount: 1
+      })
+    });
 
-      await fetch(`${API}/buy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pair: coin.pair,
-          price: coin.price,
-          amount: 1
-        })
-      });
-
-      await loadPortfolio();
-
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
+    loadPortfolio();
   };
 
   // ================= SELL =================
-  const sellPortfolio = async (id: number) => {
+  const sellCoin = async (id: number) => {
     await fetch(`${API}/sell`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -154,41 +99,45 @@ export default function Page() {
   };
 
   return (
-    <div className="dashboard">
+    <div className="wrap">
 
       {/* HEADER */}
-      <div className="topbar">
+      <div className="header">
         <div>
           <h2>AI TRADING TERMINAL</h2>
-          <p>Live Market System (Railway Connected)</p>
+          <p>Railway Live System</p>
         </div>
 
-        <div className={`status ${connected ? "on" : "off"}`}>
+        <div className={connected ? "live" : "off"}>
           {connected ? "LIVE" : "OFFLINE"}
         </div>
       </div>
 
-      {/* MARKET STATUS */}
-      <div className={`warning ${marketDirection}`}>
+      {/* MARKET STATUS FIXED */}
+      <div className={`market ${marketDirection}`}>
         MARKET: {marketDirection}
       </div>
 
-      {/* COINS */}
+      {/* COINS GRID */}
       <div className="grid">
-        {filteredCoins.map((c: any, i: number) => (
-          <div className="coin" key={i}>
-            <b>{c.pair}</b>
-            <div>SIGNAL: {c.signal}</div>
-            <div>PRICE: {c.price}</div>
+        {filteredCoins.length === 0 && (
+          <div className="empty">
+            NO MARKET DATA - CHECK BACKEND SOCKET
+          </div>
+        )}
 
-            <div style={{ fontSize: 12, marginTop: 6 }}>
-              SCORE: {c.score?.toFixed?.(2) || 0}
+        {filteredCoins.map((c: any, i: number) => (
+          <div className="card" key={i}>
+            <b>{c.pair}</b>
+
+            <div className={`signal ${c.signal}`}>
+              {c.signal}
             </div>
 
-            <button
-              disabled={loading}
-              onClick={() => addPortfolio(c)}
-            >
+            <div>PRICE: {c.price}</div>
+            <div>SCORE: {c.score?.toFixed?.(2) || 0}</div>
+
+            <button onClick={() => buyCoin(c)}>
               BUY
             </button>
           </div>
@@ -197,15 +146,20 @@ export default function Page() {
 
       {/* PORTFOLIO */}
       <h3>PORTFOLIO</h3>
+
+      {portfolio.length === 0 && (
+        <div className="empty">NO PORTFOLIO</div>
+      )}
+
       {portfolio.map((p: any) => (
-        <div key={p.id} className="item">
+        <div className="portfolio" key={p.id}>
           <div>
             <b>{p.pair}</b>
             <div>ENTRY: {p.entry_price}</div>
             <div>PNL: {p.pnl}</div>
           </div>
 
-          <button onClick={() => sellPortfolio(p.id)}>
+          <button onClick={() => sellCoin(p.id)}>
             SELL
           </button>
         </div>
@@ -213,16 +167,32 @@ export default function Page() {
 
       {/* STYLE */}
       <style jsx>{`
-        .dashboard { background:#0b1220; color:#fff; padding:20px; min-height:100vh; }
-        .topbar { display:flex; justify-content:space-between; }
-        .status.on { background:green; padding:5px 10px; border-radius:10px; }
-        .status.off { background:red; padding:5px 10px; border-radius:10px; }
+        .wrap { background:#0b1220; color:white; min-height:100vh; padding:20px; }
+
+        .header { display:flex; justify-content:space-between; }
+
+        .live { background:green; padding:5px 10px; border-radius:10px; }
+        .off { background:red; padding:5px 10px; border-radius:10px; }
+
+        .market { margin-top:15px; padding:10px; border-radius:8px; }
+
+        .BULLISH { background:#052e16; }
+        .BEARISH { background:#450a0a; }
+        .SIDEWAYS { background:#1e293b; }
+        .NO\ DATA { background:#111827; }
 
         .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:10px; margin-top:20px; }
 
-        .coin { background:#111827; padding:10px; border-radius:10px; }
+        .card { background:#111827; padding:10px; border-radius:10px; }
 
-        .item { background:#111827; margin-top:10px; padding:10px; display:flex; justify-content:space-between; }
+        .signal { font-size:12px; margin:5px 0; }
+
+        .BUY { color:#22c55e; }
+        .SELL { color:#ef4444; }
+
+        .portfolio { display:flex; justify-content:space-between; background:#111827; padding:10px; margin-top:10px; }
+
+        .empty { padding:20px; color:#9ca3af; }
       `}</style>
 
     </div>
