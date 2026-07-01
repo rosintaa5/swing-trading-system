@@ -1,3 +1,6 @@
+//////////////////////////////
+// CORE DEPENDENCIES
+//////////////////////////////
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
@@ -6,24 +9,34 @@ const axios = require("axios");
 const { Pool } = require("pg");
 require("dotenv").config();
 
+//////////////////////////////
+// INIT APP
+//////////////////////////////
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
 
+//////////////////////////////
+// SOCKET SETUP
+//////////////////////////////
 const io = new Server(server, {
   cors: { origin: "*" },
   transports: ["websocket", "polling"]
 });
 
-// ================= DB =================
+//////////////////////////////
+// DATABASE
+//////////////////////////////
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
 });
 
-// ================= INIT =================
+//////////////////////////////
+// INIT TABLES (SAFE)
+//////////////////////////////
 async function initDB() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS portfolio_positions (
@@ -43,7 +56,6 @@ async function initDB() {
       pair TEXT,
       price FLOAT,
       score FLOAT,
-      signal TEXT,
       created_at TIMESTAMP DEFAULT NOW()
     );
   `);
@@ -53,74 +65,232 @@ async function initDB() {
 
 initDB();
 
-// ================= INDODAX API =================
+//////////////////////////////
+// INDODAX BASE
+//////////////////////////////
 const BASE = "https://indodax.com/api";
 
-async function getTickers() {
-  try {
-    const res = await axios.get(`${BASE}/tickers`, {
-      timeout: 5000
-    });
-    return res.data?.tickers || {};
-  } catch (e) {
-    console.log("API ERROR:", e.message);
-    return {};
-  }
-}
-
-// ================= GLOBAL CACHE =================
+//////////////////////////////
+// GLOBAL CACHE SYSTEM
+//////////////////////////////
 let cache = {
   tickers: {},
   lastUpdate: 0
 };
 
+// cache order book (biar tidak spam API)
+const ORDER_BOOK_CACHE = {};
+
+// cache trades flow
+const TRADES_CACHE = {};
+
+// lock stream agar tidak overlap
 let streamLock = false;
 
-// ================= UTILS =================
-const num = (v) => Number(v || 0);
+//////////////////////////////
+// UTILS SAFE
+//////////////////////////////
 
-// ================= AI ENGINE =================
-function analyzeCoin(t) {
+// convert aman ke number
+const num = (v) => parseFloat(v || 0);
+
+// normalisasi pair (btc_idr format wajib)
+const normalizePair = (p) => {
+  if (!p) return null;
+  return p.toLowerCase().replace("/", "_").replace("-", "_").trim();
+};
+
+//////////////////////////////
+// FETCH TICKERS
+//////////////////////////////
+async function getTickers() {
   try {
-    const price = num(t.last);
-    const vol = num(t.vol_idr);
-    const change = num(t.change);
+    const res = await axios.get(`${BASE}/tickers`, { timeout: 8000 });
 
-    if (!price || vol < 100000000) return null;
+    if (!res.data?.tickers) return {};
 
-    const whale = Math.log10(vol + 1);
-    const momentum = change * 2;
-    const liquidity = Math.log1p(vol) / 10;
+    return res.data.tickers;
 
-    const score = whale * 2 + momentum * 1.5 + liquidity;
+  } catch (e) {
+    console.log("TICKER ERROR:", e.message);
+    return {};
+  }
+}
 
-    let signal = "HOLD";
-    if (score > 6) signal = "BUY";
-    if (score < -6) signal = "SELL";
+//////////////////////////////
+// FETCH ORDER BOOK (DEPTH)
+//////////////////////////////
+async function getOrderBook(pair) {
+  try {
+    const norm = normalizePair(pair);
 
-    return {
-      price,
-      vol,
-      score,
-      signal
-    };
+    const res = await axios.get(`${BASE}/depth/${norm}`, {
+      timeout: 8000
+    });
+
+    return res.data || null;
+
   } catch {
     return null;
   }
 }
 
-// ================= GLOBAL MARKET FETCH (ANTI-SPAM) =================
+//////////////////////////////
+// FETCH TRADES (NEW IMPORTANT API)
+//////////////////////////////
+async function getTrades(pair) {
+  try {
+    const norm = normalizePair(pair);
+
+    const res = await axios.get(`${BASE}/trades/${norm}`, {
+      timeout: 8000
+    });
+
+    if (!Array.isArray(res.data)) return [];
+
+    return res.data;
+
+  } catch {
+    return [];
+  }
+}
+
+//////////////////////////////
+// ORDER BOOK ANALYSIS
+//////////////////////////////
+function analyzeOrderBook(depth) {
+  try {
+    if (!depth?.buy || !depth?.sell) return null;
+
+    const buyVolume = depth.buy.reduce((a, v) => a + num(v[1]), 0);
+    const sellVolume = depth.sell.reduce((a, v) => a + num(v[1]), 0);
+
+    const total = buyVolume + sellVolume;
+    if (!total) return null;
+
+    const imbalance = (buyVolume - sellVolume) / total;
+
+    let signal = "NEUTRAL";
+    if (imbalance > 0.25) signal = "BUY_PRESSURE";
+    if (imbalance < -0.25) signal = "SELL_PRESSURE";
+
+    return {
+      buyVolume,
+      sellVolume,
+      imbalance,
+      signal
+    };
+
+  } catch {
+    return null;
+  }
+}
+
+//////////////////////////////
+// TRADES FLOW ANALYSIS
+//////////////////////////////
+function analyzeTrades(trades = []) {
+  try {
+    let buy = 0;
+    let sell = 0;
+
+    for (const t of trades) {
+      const amount = num(t.amount);
+
+      if (t.type === "buy") buy += amount;
+      else sell += amount;
+    }
+
+    const total = buy + sell;
+    if (!total) return null;
+
+    const imbalance = (buy - sell) / total;
+
+    let signal = "NEUTRAL";
+    if (imbalance > 0.2) signal = "BUY_FLOW";
+    if (imbalance < -0.2) signal = "SELL_FLOW";
+
+    return {
+      buy,
+      sell,
+      imbalance,
+      signal
+    };
+
+  } catch {
+    return null;
+  }
+}
+
+//////////////////////////////
+// MAIN MARKET ENGINE
+//////////////////////////////
+function analyzeCoin(t, ob, tf) {
+  try {
+    const price = num(t.last);
+    const vol = num(t.vol_idr);
+    const change = num(t.change);
+
+    if (!price || !vol || vol < 100000000) return null;
+
+    // MARKET STRUCTURE SCORE
+    const whale = Math.log10(vol + 1);
+    const momentum = change * 2;
+    const liquidity = Math.log1p(vol) / 10;
+
+    // ORDER BOOK CONTRIBUTION
+    let obScore = ob?.imbalance ? ob.imbalance * 5 : 0;
+
+    // TRADES FLOW CONTRIBUTION
+    let tfScore = tf?.imbalance ? tf.imbalance * 5 : 0;
+
+    const score =
+      whale * 2 +
+      momentum * 1.5 +
+      liquidity +
+      obScore +
+      tfScore;
+
+    let signal = "HOLD";
+
+    if (score > 6 || ob?.signal === "BUY_PRESSURE" || tf?.signal === "BUY_FLOW") {
+      signal = "BUY";
+    }
+
+    if (score < -6 || ob?.signal === "SELL_PRESSURE" || tf?.signal === "SELL_FLOW") {
+      signal = "SELL";
+    }
+
+    return {
+      price,
+      vol,
+      change,
+      score,
+      signal,
+      orderBook: ob,
+      tradesFlow: tf
+    };
+
+  } catch {
+    return null;
+  }
+}
+
+//////////////////////////////
+// MARKET CACHE UPDATE
+//////////////////////////////
 async function updateMarket() {
   const now = Date.now();
 
-  // cache 3 detik
   if (now - cache.lastUpdate < 3000) return;
 
   cache.tickers = await getTickers();
   cache.lastUpdate = now;
 }
 
-// ================= PORTFOLIO =================
+//////////////////////////////
+// PORTFOLIO
+//////////////////////////////
 async function getPortfolio() {
   const res = await pool.query(
     "SELECT * FROM portfolio_positions WHERE status='OPEN'"
@@ -128,13 +298,12 @@ async function getPortfolio() {
   return res.rows;
 }
 
-async function updatePortfolio(market) {
-  const portfolio = await getPortfolio();
-
+async function updatePortfolio(market, portfolio) {
   let equity = 0;
 
   const updates = portfolio.map((p) => {
-    const price = num(market[p.pair]?.last);
+    const price = num(market[normalizePair(p.pair)]?.last);
+
     if (!price) return null;
 
     const pnl = (price - p.entry_price) * p.amount;
@@ -152,53 +321,9 @@ async function updatePortfolio(market) {
   return equity;
 }
 
-// ================= BUY =================
-app.post("/buy", async (req, res) => {
-  try {
-    const { pair, price, amount } = req.body;
-
-    if (!pair || !price || !amount) {
-      return res.status(400).json({ error: "INVALID DATA" });
-    }
-
-    const result = await pool.query(
-      `INSERT INTO portfolio_positions (pair, entry_price, amount, status)
-       VALUES ($1,$2,$3,'OPEN') RETURNING *`,
-      [pair, price, amount]
-    );
-
-    res.json(result.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ================= SELL =================
-app.post("/sell", async (req, res) => {
-  try {
-    const { id } = req.body;
-
-    await pool.query(
-      "UPDATE portfolio_positions SET status='CLOSED' WHERE id=$1",
-      [id]
-    );
-
-    res.json({ success: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ================= GET PORTFOLIO =================
-app.get("/portfolio", async (req, res) => {
-  const result = await pool.query(
-    "SELECT * FROM portfolio_positions ORDER BY created_at DESC"
-  );
-
-  res.json(result.rows);
-});
-
-// ================= SAFE STREAM (LOCKED) =================
+//////////////////////////////
+// STREAM ENGINE (CORE LOGIC)
+//////////////////////////////
 async function stream(socket) {
   if (streamLock) return;
   streamLock = true;
@@ -207,44 +332,83 @@ async function stream(socket) {
     await updateMarket();
 
     const tickers = cache.tickers;
-    const results = [];
+    const keys = Object.keys(tickers || {});
 
-    const keys = Object.keys(tickers);
+    const results = await Promise.all(
+      keys.map(async (k) => {
 
-    // PARALLEL SAFE BATCH (ANTI BLOCKING)
-    await Promise.all(
-      keys.map((k) => {
-        const r = analyzeCoin(tickers[k]);
-        if (r) results.push({ pair: k, ...r });
+        const ticker = tickers[k];
+
+        //////////////////////////////
+        // ORDER BOOK CACHE (5 DETIK)
+        //////////////////////////////
+        let ob = ORDER_BOOK_CACHE[k];
+
+        if (!ob || Date.now() - ob.time > 5000) {
+          const depth = await getOrderBook(k);
+          const obSignal = analyzeOrderBook(depth);
+
+          ORDER_BOOK_CACHE[k] = {
+            data: obSignal,
+            time: Date.now()
+          };
+        }
+
+        //////////////////////////////
+        // TRADES CACHE (5 DETIK)
+        //////////////////////////////
+        let tf = TRADES_CACHE[k];
+
+        if (!tf || Date.now() - tf.time > 5000) {
+          const trades = await getTrades(k);
+          const tfSignal = analyzeTrades(trades);
+
+          TRADES_CACHE[k] = {
+            data: tfSignal,
+            time: Date.now()
+          };
+        }
+
+        const r = analyzeCoin(
+          ticker,
+          ORDER_BOOK_CACHE[k]?.data,
+          TRADES_CACHE[k]?.data
+        );
+
+        return r ? { pair: k, ...r } : null;
       })
     );
 
-    const ranked = results.sort((a, b) => b.score - a.score);
+    const filtered = results.filter(Boolean);
 
+    const ranked = filtered.sort((a, b) => b.score - a.score);
     const top = ranked.slice(0, 10);
 
-    // SAFE BATCH INSERT (NO LOOP QUERY)
+    //////////////////////////////
+    // SAVE SNAPSHOT SAFE
+    //////////////////////////////
     if (top.length > 0) {
       const values = [];
       const params = [];
 
       top.forEach((t, i) => {
-        values.push(`($${i * 3 + 1},$${i * 3 + 2},$${i * 3 + 3})`);
-        params.push(t.pair, t.price, t.score);
+        values.push(`($${i * 2 + 1}, $${i * 2 + 2})`);
+        params.push(t.pair, t.price);
       });
 
       await pool.query(
-        `INSERT INTO market_snapshots (pair, price, score)
+        `INSERT INTO market_snapshots (pair, price)
          VALUES ${values.join(",")}`,
         params
       );
     }
 
-    const equity = await updatePortfolio(tickers);
+    const portfolio = await getPortfolio();
+    const equity = await updatePortfolio(tickers, portfolio);
 
-    socket.emit("v12_fixed", {
+    socket.emit("v14_engine", {
       equity,
-      portfolio: await getPortfolio(),
+      portfolio,
       top,
       timestamp: Date.now()
     });
@@ -256,7 +420,9 @@ async function stream(socket) {
   }
 }
 
-// ================= SOCKET =================
+//////////////////////////////
+// SOCKET HANDLER
+//////////////////////////////
 io.on("connection", (socket) => {
   console.log("CLIENT CONNECTED");
 
@@ -267,14 +433,19 @@ io.on("connection", (socket) => {
   });
 });
 
-// ================= HEALTH =================
+//////////////////////////////
+// HEALTH CHECK
+//////////////////////////////
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
-    system: "V12 FIXED PRODUCTION READY BACKEND"
+    system: "INDODAX V14 SMART FLOW ENGINE"
   });
 });
 
+//////////////////////////////
+// START SERVER
+//////////////////////////////
 server.listen(process.env.PORT || 3000, () => {
-  console.log("SYSTEM READY (FIXED)");
+  console.log("SYSTEM READY");
 });
