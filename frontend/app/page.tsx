@@ -9,11 +9,9 @@ export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
   const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
   const [loadingPair, setLoadingPair] = useState<string | null>(null);
 
-  // ================= SOCKET =================
   useEffect(() => {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
@@ -26,97 +24,160 @@ export default function Page() {
     };
   }, []);
 
-  // ================= LOAD =================
   const loadPortfolio = async () => {
     const res = await fetch(`${API}/portfolio`);
     setPortfolio(await res.json());
   };
 
-  const loadHistory = async () => {
-    const res = await fetch(`${API}/market/history`);
-    setHistory(await res.json());
-  };
-
   useEffect(() => {
     loadPortfolio();
-    loadHistory();
   }, []);
 
-  // ================= COINS =================
   const coins = useMemo(() => {
     if (!data?.top) return [];
     return data.top.filter((c: any) => c?.price > 0);
   }, [data]);
 
-  // ================= ADVANCED SCORING ENGINE =================
+  // ================= DYNAMIC NARRATIVE ENGINE =================
   const enrichedCoins = useMemo(() => {
     return coins.map((c: any) => {
       const entry = c.price;
 
-      // PRICE TARGETS
-      const tp1 = entry * 1.015;
-      const tp2 = entry * 1.04;
-      const tp3 = entry * 1.08;
-
+      const tp1 = entry * 1.02;
+      const tp2 = entry * 1.05;
       const sl = entry * 0.97;
 
-      // RAW FACTORS
-      const momentum = c.momentum_score || 0;
       const whale = c.whale_score || 0;
+      const momentum = c.momentum_score || 0;
       const liquidity = c.liquidity_score || 0;
+      const risk = c.risk_score || 0;
 
-      // NEWS BIAS SIMULATION
-      const news_bias = 0.62;
+      const newsBias = 0.6;
 
-      // RISK PENALTY FUNCTION
-      const risk_penalty = (c.risk_score || 0) * 0.4;
+      const confidence = Math.min(
+        100,
+        whale * 10 + momentum * 8 + newsBias * 20
+      );
 
-      // FINAL SCORE FORMULA (REAL ENGINE)
-      const finalScore =
-        whale * 0.35 +
-        momentum * 0.30 +
-        liquidity * 0.15 +
-        news_bias * 10 * 0.20 -
-        risk_penalty;
+      const score =
+        whale * 0.4 +
+        momentum * 0.3 +
+        liquidity * 0.2 +
+        newsBias * 10 -
+        risk * 0.5;
 
-      // CONFIDENCE
-      const confidence = Math.min(100, finalScore * 10);
-
-      // PRICE PREDICTION RANGE
-      const predictedLow = entry * 0.97;
-      const predictedMid = entry * 1.02;
-      const predictedHigh = entry * 1.07;
-
-      // DECISION ENGINE
       let decision = "HOLD";
+      if (score > 6) decision = "BUY STRONG";
+      if (score < 3) decision = "EXIT";
+      if (score > 4 && c.signal === "SELL") decision = "TAKE PROFIT";
 
-      if (finalScore > 7 && c.signal === "BUY") decision = "STRONG BUY";
-      else if (finalScore > 5) decision = "BUY SETUP";
-      else if (finalScore < 3) decision = "EXIT NOW";
-      else if (c.signal === "SELL") decision = "TAKE PROFIT";
+      // ================= DYNAMIC SENTENCE ENGINE =================
+      const analysis: string[] = [];
 
-      // NARRATIVE ANALYSIS ENGINE (MULTI SENTENCE)
-      const analysis = [
-        `Market menunjukkan momentum sebesar ${momentum.toFixed(2)} yang mengindikasikan ${momentum > 5 ? "trend kuat" : "trend lemah"}.`,
-        `Aktivitas whale berada pada level ${whale.toFixed(2)} yang menandakan ${whale > 6 ? "akumulasi signifikan" : "aktivitas normal"}.`,
-        `Likuiditas saat ini ${liquidity.toFixed(2)} yang menunjukkan ${liquidity > 6 ? "area perdagangan sehat" : "potensi slippage tinggi"}.`,
-        `Sentimen news memberi bias ${news_bias > 0.6 ? "positif" : "netral hingga negatif"} terhadap market.`,
-        `Risk score berada pada ${c.risk_score || 0}, sehingga kondisi ${(c.risk_score || 0) > 6 ? "cukup berbahaya" : "masih terkendali"}.`,
-        `Kesimpulan sistem: coin ini berada pada fase ${decision}.`
-      ];
+      // WHALE LOGIC
+      if (whale > 7) {
+        analysis.push(
+          `Aktivitas whale berada pada level tinggi (${whale.toFixed(
+            2
+          )}), mengindikasikan potensi akumulasi oleh institusi besar.`
+        );
+      } else if (whale > 4) {
+        analysis.push(
+          `Whale activity terdeteksi moderat (${whale.toFixed(
+            2
+          )}), menunjukkan adanya distribusi terbatas.`
+        );
+      } else {
+        analysis.push(
+          `Tidak terdapat aktivitas whale signifikan (${whale.toFixed(
+            2
+          )}), pasar masih didominasi retail trader.`
+        );
+      }
+
+      // MOMENTUM LOGIC
+      if (momentum > 7) {
+        analysis.push(
+          `Momentum sangat kuat (${momentum.toFixed(
+            2
+          )}), harga menunjukkan dorongan bullish yang konsisten.`
+        );
+      } else if (momentum > 4) {
+        analysis.push(
+          `Momentum sedang (${momentum.toFixed(
+            2
+          )}), trend masih terbentuk namun belum solid.`
+        );
+      } else {
+        analysis.push(
+          `Momentum lemah (${momentum.toFixed(
+            2
+          )}), market cenderung sideways atau konsolidasi.`
+        );
+      }
+
+      // LIQUIDITY LOGIC
+      if (liquidity > 7) {
+        analysis.push(
+          `Likuiditas tinggi (${liquidity.toFixed(
+            2
+          )}), kondisi ideal untuk entry dan exit tanpa slippage besar.`
+        );
+      } else {
+        analysis.push(
+          `Likuiditas terbatas (${liquidity.toFixed(
+            2
+          )}), risiko slippage meningkat pada volatilitas tinggi.`
+        );
+      }
+
+      // RISK LOGIC
+      if (risk > 7) {
+        analysis.push(
+          `Risiko pasar tinggi (${risk.toFixed(
+            2
+          )}), disarankan mengurangi eksposur posisi.`
+        );
+      } else if (risk > 4) {
+        analysis.push(
+          `Risiko moderat (${risk.toFixed(
+            2
+          )}), gunakan manajemen risiko ketat.`
+        );
+      } else {
+        analysis.push(
+          `Risiko rendah (${risk.toFixed(
+            2
+          )}), kondisi market relatif stabil.`
+        );
+      }
+
+      // NEWS LOGIC
+      if (newsBias > 0.6) {
+        analysis.push(
+          `Sentimen news saat ini bullish (${newsBias.toFixed(
+            2
+          )}), memberikan dorongan tambahan pada harga.`
+        );
+      } else {
+        analysis.push(
+          `Sentimen news netral (${newsBias.toFixed(
+            2
+          )}), tidak memberikan dorongan signifikan.`
+        );
+      }
+
+      // FINAL CONCLUSION
+      analysis.push(`Kesimpulan sistem: posisi ini direkomendasikan untuk ${decision}.`);
 
       return {
         ...c,
         entry,
         tp1,
         tp2,
-        tp3,
         sl,
         confidence: confidence.toFixed(0),
-        finalScore: finalScore.toFixed(2),
-        predictedLow,
-        predictedMid,
-        predictedHigh,
+        score: score.toFixed(2),
         decision,
         analysis
       };
@@ -128,28 +189,6 @@ export default function Page() {
     return enrichedCoins.filter((c: any) => c.signal === filter);
   }, [enrichedCoins, filter]);
 
-  // ================= PORTFOLIO ENGINE =================
-  const evaluatedPortfolio = useMemo(() => {
-    return portfolio.map((p: any) => {
-      const pnl = p.pnl || 0;
-
-      const score = pnl + 5;
-
-      let status = "HOLD";
-
-      if (score > 10) status = "STRONG HOLD";
-      else if (score > 3) status = "HOLD";
-      else if (score < 0) status = "WEAK HOLD";
-      else if (score < -5) status = "EXIT NOW";
-
-      return {
-        ...p,
-        status
-      };
-    });
-  }, [portfolio]);
-
-  // ================= BUY =================
   const buy = async (coin: any) => {
     try {
       setLoadingPair(coin.pair);
@@ -180,54 +219,32 @@ export default function Page() {
     loadPortfolio();
   };
 
-  // ================= UI =================
   return (
     <div className="app">
 
       {/* HEADER */}
-      <header className="topbar">
-        <div>
-          <h1>ULTRA AI TRADING INTELLIGENCE</h1>
-          <p>Multi-factor scoring + narrative analysis engine</p>
-        </div>
-
-        <div className={`status ${connected ? "on" : "off"}`}>
-          {connected ? "LIVE" : "OFFLINE"}
-        </div>
-      </header>
+      <div className="topbar">
+        <h1>DYNAMIC AI TRADING ENGINE</h1>
+        <span>{connected ? "LIVE" : "OFFLINE"}</span>
+      </div>
 
       {/* GRID */}
       <div className="grid">
         {filteredCoins.map((c: any) => (
           <div className="card" key={c.pair}>
 
-            <div className="head">
-              <h3>{c.pair}</h3>
-              <span>{c.decision}</span>
-            </div>
+            <h3>{c.pair}</h3>
 
             <div className="metrics">
-              <b>Score: {c.finalScore}</b>
-              <b>Confidence: {c.confidence}%</b>
-            </div>
-
-            <div className="price">
-              <div>ENTRY: {c.entry}</div>
-              <div>TP1: {c.tp1.toFixed(2)}</div>
-              <div>TP2: {c.tp2.toFixed(2)}</div>
-              <div>TP3: {c.tp3.toFixed(2)}</div>
+              <div>Score: {c.score}</div>
+              <div>Confidence: {c.confidence}%</div>
+              <div>Entry: {c.entry}</div>
+              <div>TP: {c.tp1.toFixed(2)} / {c.tp2.toFixed(2)}</div>
               <div>SL: {c.sl.toFixed(2)}</div>
             </div>
 
-            <div className="prediction">
-              <b>Prediction Range</b>
-              <p>Low: {c.predictedLow.toFixed(2)}</p>
-              <p>Mid: {c.predictedMid.toFixed(2)}</p>
-              <p>High: {c.predictedHigh.toFixed(2)}</p>
-            </div>
-
+            {/* DYNAMIC ANALYSIS */}
             <div className="analysis">
-              <b>AI Analysis</b>
               {c.analysis.map((a: string, i: number) => (
                 <p key={i}>• {a}</p>
               ))}
@@ -237,7 +254,7 @@ export default function Page() {
               disabled={loadingPair === c.pair}
               onClick={() => buy(c)}
             >
-              EXECUTE BUY
+              BUY
             </button>
 
           </div>
@@ -246,21 +263,19 @@ export default function Page() {
 
       {/* PORTFOLIO */}
       <div className="portfolio">
-        <h2>Portfolio Intelligence</h2>
+        <h2>PORTFOLIO</h2>
 
-        {evaluatedPortfolio.map((p: any) => (
+        {portfolio.map((p: any) => (
           <div key={p.id} className="row">
             <div>
               <b>{p.pair}</b>
               <small>PNL: {p.pnl}</small>
-              <small>Status: {p.status}</small>
             </div>
             <button onClick={() => sell(p.id)}>SELL</button>
           </div>
         ))}
       </div>
 
-      {/* STYLE */}
       <style jsx>{`
         .app {
           background:#0b0f1a;
@@ -273,10 +288,8 @@ export default function Page() {
           display:flex;
           justify-content:space-between;
           border-bottom:1px solid #1f2937;
+          padding-bottom:10px;
         }
-
-        .status.on { background:#16a34a; padding:6px 12px; border-radius:999px; }
-        .status.off { background:#dc2626; padding:6px 12px; border-radius:999px; }
 
         .grid {
           display:grid;
@@ -295,12 +308,12 @@ export default function Page() {
           font-size:12px;
           opacity:0.85;
           margin-top:10px;
+          line-height:1.5;
         }
 
-        .prediction {
-          font-size:12px;
+        .metrics {
+          font-size:13px;
           margin-top:8px;
-          color:#93c5fd;
         }
 
         .portfolio {
