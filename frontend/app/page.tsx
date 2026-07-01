@@ -1,350 +1,274 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { socket } from "@/lib/socket";
 
 const API = "https://confident-tranquility-production-ceaa.up.railway.app";
 
 export default function Page() {
   const [data, setData] = useState<any>(null);
-  const [connected, setConnected] = useState(false);
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
-
-  // State untuk Form CRUD Tambah Pantauan
-  const [formPair, setFormPair] = useState("");
-  const [formEntry, setFormEntry] = useState("");
-  const [formAmount, setFormAmount] = useState("");
-  const [formTp, setFormTp] = useState("");
-  const [formSl, setFormSl] = useState("");
-  const [formNewsBias, setFormNewsBias] = useState("NEUTRAL");
-  const [formNotes, setFormNotes] = useState("");
-
-  // State untuk Mode Edit
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editNotes, setEditNotes] = useState("");
-  const [editStatus, setEditStatus] = useState("OPEN");
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
 
   useEffect(() => {
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-    socket.on("v12_fixed", (res) => {
+    socket.on("market_data", (res) => {
       setData(res);
       if (res.portfolio) setPortfolio(res.portfolio);
     });
-
-    return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("v12_fixed");
-    };
+    return () => { socket.off("market_data"); };
   }, []);
 
   const loadPortfolio = async () => {
-    try {
-      const res = await fetch(`${API}/portfolio`);
-      if (res.ok) setPortfolio(await res.json());
-    } catch (err) {
-      console.error(err);
-    }
+    const res = await fetch(`${API}/portfolio`);
+    if (res.ok) setPortfolio(await res.json());
   };
 
-  useEffect(() => {
-    loadPortfolio();
-  }, []);
-
-  // ================= CRUD ACTIONS =================
-  const handleCreateEntry = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formPair) return alert("Nama Pair wajib diisi!");
+  const handleBuy = async (coin: any) => {
+    setLoadingAction(coin.pair);
+    const tp = coin.price * 1.05; 
+    const sl = coin.price * 0.97; 
     
     try {
-      const res = await fetch(`${API}/portfolio`, {
+      await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          pair: formPair.toLowerCase(),
-          entry_price: parseFloat(formEntry) || 0,
-          amount: parseFloat(formAmount) || 0,
-          target_tp: parseFloat(formTp) || 0,
-          target_sl: parseFloat(formSl) || 0,
-          notes: formNotes,
-          news_bias: formNewsBias
+          pair: coin.pair,
+          entry_price: coin.price,
+          target_tp: tp,
+          target_sl: sl,
+          news_headline: coin.news_headline,
+          news_impact: coin.news_impact
         })
       });
-      if (res.ok) {
-        // Reset Form
-        setFormPair(""); setFormEntry(""); setFormAmount("");
-        setFormTp(""); setFormSl(""); setFormNotes(""); setFormNewsBias("NEUTRAL");
-        loadPortfolio();
-      }
-    } catch (err) {
-      console.error(err);
+      loadPortfolio();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingAction(null);
     }
   };
 
-  const handleUpdateEntry = async (id: number) => {
-    const targetItem = portfolio.find(p => p.id === id);
-    if (!targetItem) return;
-
+  const handleSell = async (id: number) => {
+    setLoadingAction(`sell_${id}`);
     try {
-      const res = await fetch(`${API}/portfolio/${id}`, {
-        method: "PUT",
+      await fetch(`${API}/sell`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          target_tp: targetItem.target_tp,
-          target_sl: targetItem.target_sl,
-          status: editStatus,
-          notes: editNotes,
-          news_bias: targetItem.news_bias
-        })
+        body: JSON.stringify({ id })
       });
-      if (res.ok) {
-        setEditingId(null);
-        loadPortfolio();
-      }
-    } catch (err) {
-      console.error(err);
+      loadPortfolio(); 
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingAction(null);
     }
   };
 
-  const handleDeleteEntry = async (id: number) => {
-    if (!confirm("Hapus koin ini dari rekap pantauan?")) return;
-    try {
-      const res = await fetch(`${API}/portfolio/${id}`, { method: "DELETE" });
-      if (res.ok) loadPortfolio();
-    } catch (err) {
-      console.error(err);
-    }
+  const activeCoins = data?.top || [];
+
+  // Helper untuk progress bar Buying Pressure
+  const getPressureColor = (val: number) => {
+    if (val >= 80) return "#10b981"; // Bullish Overbought
+    if (val <= 20) return "#8b5cf6"; // Oversold (Peluang Reversal)
+    return "#3b82f6"; // Netral
   };
-
-  // Quick Action Tambah dari Scan Live langsung ke Form CRUD
-  const pushToForm = (coin: any) => {
-    setFormPair(coin.pair);
-    setFormEntry(coin.price.toString());
-    setFormTp((coin.price * 1.05).toFixed(1));
-    setFormSl((coin.price * 0.97).toFixed(1));
-    setFormNotes(`Analisis AI: Skor Kuantitatif ${coin.score.toFixed(2)}. Berita terpantau ${coin.news_direction}`);
-    setFormNewsBias(coin.news_direction);
-  };
-
-  // Narasi cerdas untuk Scanner Real-time
-  const analyzedCoins = useMemo(() => {
-    if (!data?.top) return [];
-    return data.top.map((c: any) => {
-      const n: string[] = [];
-      n.push(`[Aktivitas Volume] Berada di skala ${c.whale_score?.toFixed(1)}/10.`);
-      n.push(`[Momentum Volatilitas] Bernilai ${c.momentum_score?.toFixed(1)}/10.`);
-      n.push(`[Sentimen Berita] Arah Dampak: ${c.news_direction}. ${c.news_headline}`);
-      return { ...c, customNarrative: n };
-    });
-  }, [data]);
-
-  const filteredCoins = useMemo(() => {
-    if (filter === "ALL") return analyzedCoins;
-    return analyzedCoins.filter((c: any) => c.signal === filter);
-  }, [analyzedCoins, filter]);
 
   return (
-    <div className="app">
-      {/* TOPBAR */}
-      <div className="topbar">
+    <div className="dashboard">
+      <header className="header">
         <div>
-          <h1>PRO-TRADER MONITORING & ANALYSIS RECAP</h1>
-          <p style={{ fontSize: "13px", color: "#a1a1aa" }}>
-            Real-time Indodax Scanner Feed | BTC: {data?.btc ? parseFloat(data.btc).toLocaleString() : "-"} IDR ({data?.btcChange || 0}%)
-          </p>
+          <h1>⚡ AI TRADING TERMINAL V2</h1>
+          <p>Advanced Quantitative Metrics | BTC: {data?.btc ? parseFloat(data.btc).toLocaleString() : "Loading..."} IDR</p>
         </div>
-        <span className={`status-badge ${connected ? "live" : "offline"}`}>
-          {connected ? "MONITOR CONNECTED" : "OFFLINE READ MODE"}
-        </span>
-      </div>
-
-      <div className="main-layout">
-        {/* LEFT COLUMN: CRUD FORM & PANTAUAN REKAP */}
-        <div className="left-panel">
-          
-          {/* CREATE FORM */}
-          <div className="crud-box">
-            <h2>➕ BUAT REKAP ENTRI & PANTAUAN BARU</h2>
-            <form onSubmit={handleCreateEntry} className="grid-form">
-              <input type="text" placeholder="Contoh: btc_idr" value={formPair} onChange={e => setFormPair(e.target.value)} />
-              <input type="number" step="any" placeholder="Harga Masuk / Entry" value={formEntry} onChange={e => setFormEntry(e.target.value)} />
-              <input type="number" step="any" placeholder="Jumlah Aset (Amount)" value={formAmount} onChange={e => setFormAmount(e.target.value)} />
-              <input type="number" step="any" placeholder="Target Take Profit (TP)" value={formTp} onChange={e => setFormTp(e.target.value)} />
-              <input type="number" step="any" placeholder="Batas Stop Loss (SL)" value={formSl} onChange={e => setFormSl(e.target.value)} />
-              
-              <select value={formNewsBias} onChange={e => setFormNewsBias(e.target.value)}>
-                <option value="BULLISH">BERITA BULLISH (↗)</option>
-                <option value="NEUTRAL">BERITA NEUTRAL (→)</option>
-                <option value="BEARISH">BERITA BEARISH (↘)</option>
-              </select>
-
-              <textarea style={{ gridColumn: "1/-1" }} placeholder="Catatan Alasan Analisis Masuk Pasar..." value={formNotes} onChange={e => setFormNotes(e.target.value)} />
-              <button type="submit" className="action-btn create-btn">SIMPAN KE DAFTAR REKAP</button>
-            </form>
-          </div>
-
-          {/* PORTFOLIO REKAP LIST (READ, UPDATE, DELETE) */}
-          <div className="portfolio-box">
-            <h2>📋 REKAP JURNAL TRADING & MONITORING POSISI</h2>
-            {portfolio.map((p: any) => (
-              <div key={p.id} className={`recap-card ${p.status.toLowerCase()}`}>
-                <div className="recap-header">
-                  <div>
-                    <span className="pair-title">{p.pair.toUpperCase()}</span>
-                    <span className={`status-pill ${p.status.toLowerCase()}`}>{p.status}</span>
-                  </div>
-                  <div className="crud-actions">
-                    {editingId === p.id ? (
-                      <button className="mini-btn save" onClick={() => handleUpdateEntry(p.id)}>Simpan</button>
-                    ) : (
-                      <button className="mini-btn edit" onClick={() => {
-                        setEditingId(p.id);
-                        setEditNotes(p.notes || "");
-                        setEditStatus(p.status);
-                      }}>Edit Catatan</button>
-                    )}
-                    <button className="mini-btn delete" onClick={() => handleDeleteEntry(p.id)}>Hapus</button>
-                  </div>
-                </div>
-
-                <div className="recap-body">
-                  <p>Entry: <b>{p.entry_price?.toLocaleString()} IDR</b> | Jml: {p.amount}</p>
-                  <p>Target Plan: <span style={{ color: "#10b981" }}>TP: {p.target_tp?.toLocaleString()}</span> | <span style={{ color: "#ef4444" }}>SL: {p.target_sl?.toLocaleString()}</span></p>
-                  
-                  <div className="news-badge-area">
-                    <span>Pengaruh Berita: </span>
-                    <b className={`news-bias-text ${p.news_bias?.toLowerCase()}`}>{p.news_bias}</b>
-                  </div>
-
-                  {/* UPDATE NOTES SECTION */}
-                  {editingId === p.id ? (
-                    <div style={{ marginTop: "10px" }}>
-                      <textarea className="edit-textarea" value={editNotes} onChange={e => setEditNotes(e.target.value)} />
-                      <select className="edit-select" value={editStatus} onChange={e => setEditStatus(e.target.value)}>
-                        <option value="OPEN">OPEN (Masih Dipantau)</option>
-                        <option value="CLOSED">CLOSED (Selesai/Sudah Keluar)</option>
-                      </select>
-                    </div>
-                  ) : (
-                    <p className="user-notes">📝 <i>{p.notes || "Tidak ada catatan analisis tambahan."}</i></p>
-                  )}
-                </div>
-
-                <div className="recap-footer">
-                  <span>Floating Keuntungan: </span>
-                  <b style={{ color: p.pnl >= 0 ? "#10b981" : "#ef4444" }}>
-                    {p.pnl >= 0 ? `+${p.pnl?.toLocaleString()}` : p.pnl?.toLocaleString()} IDR
-                  </b>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="status-indicator">
+          <span className="dot animate-pulse"></span> QUANTS ONLINE
         </div>
+      </header>
 
-        {/* RIGHT COLUMN: REAL-TIME INDODAX SCANNER FEED */}
-        <div className="right-panel">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2>📊 REAL-TIME MARKET SCANS</h2>
-            <div className="filter-container">
-              <button className={filter === "ALL" ? "active" : ""} onClick={() => setFilter("ALL")}>ALL</button>
-              <button className={filter === "BUY" ? "active" : ""} onClick={() => setFilter("BUY")}>BUY</button>
-              <button className={filter === "SELL" ? "active" : ""} onClick={() => setFilter("SELL")}>SELL</button>
-            </div>
-          </div>
-
-          <div className="scan-grid">
-            {filteredCoins.map((c: any) => (
-              <div key={c.pair} className="scan-card">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <b style={{ textTransform: "uppercase", color: "#60a5fa" }}>{c.pair.replace("_", " / ")}</b>
-                  <span className={`signal-tag ${c.signal.toLowerCase()}`}>{c.signal}</span>
-                </div>
-                <div className="scan-price">Harga: {c.price.toLocaleString()} IDR</div>
-                
-                <div className="narrative-box">
-                  {c.customNarrative.map((text: string, i: number) => (
-                    <div key={i} className="narrative-line">• {text}</div>
-                  ))}
+      {/* PORTFOLIO SECTION */}
+      <section className="section-container portfolio-section">
+        <h2 className="section-title">💼 MY PORTFOLIO (LIVE POSITIONS)</h2>
+        
+        {portfolio.length === 0 ? (
+          <div className="empty-state">Portofolio kosong. Silakan beli koin dari Market Scanner di bawah.</div>
+        ) : (
+          <div className="portfolio-grid">
+            {portfolio.map((p) => (
+              <div key={p.id} className="porto-card">
+                <div className="porto-header">
+                  <h3 className="coin-name">{p.pair.replace("_", " / ").toUpperCase()}</h3>
+                  <div className={`pnl-badge ${p.pnl >= 0 ? "profit" : "loss"}`}>
+                    {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString()} IDR
+                  </div>
                 </div>
 
-                <button className="push-to-crud-btn" onClick={() => pushToForm(c)}>
-                  📥 Tarik ke Jurnal Pantauan
+                <div className="porto-details">
+                  <div className="detail-item"><span>Entry Price</span><strong>{p.entry_price?.toLocaleString()}</strong></div>
+                  <div className="detail-item"><span>Target TP (+5%)</span><strong className="text-green">{p.target_tp?.toLocaleString()}</strong></div>
+                  <div className="detail-item"><span>Stop Loss (-3%)</span><strong className="text-red">{p.target_sl?.toLocaleString()}</strong></div>
+                </div>
+
+                <button className="btn-sell" onClick={() => handleSell(p.id)} disabled={loadingAction === `sell_${p.id}`}>
+                  {loadingAction === `sell_${p.id}` ? "SELLING..." : "SELL & CLOSE POSITION"}
                 </button>
               </div>
             ))}
           </div>
+        )}
+      </section>
+
+      {/* SCANNER SECTION */}
+      <section className="section-container scanner-section">
+        <h2 className="section-title">📡 MARKET SCANNER & TECHNICAL INSIGHTS</h2>
+        
+        <div className="scanner-grid">
+          {activeCoins.map((c: any) => (
+            <div key={c.pair} className="scan-card">
+              <div className="scan-header">
+                <h3 className="coin-name">{c.pair.replace("_", " / ").toUpperCase()}</h3>
+                <span className={`signal-badge ${c.signal.replace(" ", "-").toLowerCase()}`}>{c.signal}</span>
+              </div>
+              
+              <div className="price-display">
+                <span className="current-price">{c.price.toLocaleString()} IDR</span>
+                <span className={`change ${c.change >= 0 ? "text-green" : "text-red"}`}>
+                  {c.change >= 0 ? "↗" : "↘"} {c.change?.toFixed(2)}%
+                </span>
+              </div>
+
+              {/* TECHNICAL METRICS BOX (NEW) */}
+              <div className="technical-box">
+                <div className="tech-row">
+                  <span>Volatilitas: <b>{c.technicals.volatility}%</b></span>
+                  <span>Spread Jual/Beli: <b style={{ color: parseFloat(c.technicals.spread) > 2 ? "#ef4444" : "#10b981" }}>{c.technicals.spread}%</b></span>
+                </div>
+                
+                <div className="pressure-container">
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
+                    <span>Tekanan Beli (Stochastic)</span>
+                    <span>{c.technicals.buying_pressure}%</span>
+                  </div>
+                  <div className="progress-bar-bg">
+                    <div 
+                      className="progress-bar-fill" 
+                      style={{ 
+                        width: `${c.technicals.buying_pressure}%`, 
+                        background: getPressureColor(parseFloat(c.technicals.buying_pressure)) 
+                      }}
+                    ></div>
+                  </div>
+                  <p className="pressure-label">
+                    {parseFloat(c.technicals.buying_pressure) >= 80 ? "🔥 Area Breakout / Overbought" : 
+                     parseFloat(c.technicals.buying_pressure) <= 20 ? "📉 Area Oversold (Potensi Pantulan)" : "⚖️ Konsolidasi Netral"}
+                  </p>
+                </div>
+              </div>
+
+              {/* AI INSIGHTS & NEWS */}
+              <div className="ai-insight-box">
+                <div className="insight-title">Analisis Sentimen:</div>
+                <div className="news-badge-container">
+                  <span className={`impact-tag ${c.news_impact.toLowerCase()}`}>
+                    {c.news_impact} BIAS
+                  </span>
+                </div>
+                <p className="news-headline">"{c.news_headline}"</p>
+                <p className="news-desc"><strong>Pengaruh:</strong> {c.impact_desc}</p>
+                
+                <div className="target-preview">
+                  <span>Proyeksi TP: <b>{(c.price * 1.05).toLocaleString()}</b></span>
+                  <span>Proyeksi SL: <b>{(c.price * 0.97).toLocaleString()}</b></span>
+                </div>
+              </div>
+
+              <button className="btn-buy" onClick={() => handleBuy(c)} disabled={loadingAction === c.pair}>
+                {loadingAction === c.pair ? "PROSESSING..." : "⚡ CLICK TO BUY"}
+              </button>
+            </div>
+          ))}
         </div>
-      </div>
+      </section>
 
-      {/* STYLES PACK */}
+      {/* STYLES */}
       <style dangerouslySetInnerHTML={{ __html: `
-        .app { background: #090d16; color: #f4f4f5; min-height: 100vh; padding: 24px; font-family: system-ui, sans-serif; }
-        .topbar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 20px; }
-        .status-badge { padding: 6px 14px; border-radius: 30px; font-size: 11px; font-weight: bold; }
-        .status-badge.live { background: #064e3b; color: #34d399; }
-        .status-badge.offline { background: #7f1d1d; color: #f87171; }
+        :root { --bg: #0a0e17; --card: #131b2c; --border: #223049; --green: #10b981; --red: #ef4444; --blue: #3b82f6; --text-main: #f8fafc; --text-sub: #94a3b8; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        .dashboard { background: var(--bg); color: var(--text-main); min-height: 100vh; padding: 24px; font-family: 'Inter', system-ui, sans-serif; }
         
-        .main-layout { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 24px; }
-        .crud-box, .portfolio-box { background: #111827; padding: 20px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom: 24px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
+        .header h1 { font-size: 22px; letter-spacing: 1px; color: #60a5fa; }
+        .header p { color: var(--text-sub); font-size: 13px; margin-top: 4px; }
         
-        h2 { font-size: 15px; letter-spacing: 0.5px; color: #e4e4e7; margin-bottom: 14px; text-transform: uppercase; }
+        .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: bold; color: var(--green); background: rgba(16,185,129,0.1); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(16,185,129,0.2); }
+        .dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; }
         
-        .grid-form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .grid-form input, .grid-form select, .grid-form textarea, .edit-textarea, .edit-select {
-          background: #1f2937; color: white; border: 1px solid #374151; padding: 10px; border-radius: 6px; font-size: 13px;
-        }
-        .grid-form textarea { height: 60px; resize: none; }
+        .section-container { margin-bottom: 40px; }
+        .section-title { font-size: 16px; color: #cbd5e1; margin-bottom: 16px; padding-left: 10px; border-left: 4px solid var(--blue); }
         
-        .action-btn { grid-column: 1/-1; padding: 12px; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; transition: 0.2s; }
-        .create-btn { background: #2563eb; color: white; }
-        .create-btn:hover { background: #1d4ed8; }
+        /* PORTFOLIO GRID */
+        .empty-state { background: var(--card); border: 1px dashed var(--border); padding: 30px; text-align: center; color: var(--text-sub); border-radius: 12px; }
+        .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+        .porto-card { background: linear-gradient(180deg, #162032 0%, var(--card) 100%); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .porto-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .coin-name { font-size: 18px; font-weight: 800; }
+        .pnl-badge { font-weight: 800; font-size: 15px; padding: 6px 10px; border-radius: 8px; }
+        .pnl-badge.profit { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+        .pnl-badge.loss { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
         
-        .recap-card { background: #1f2937; border-radius: 8px; padding: 16px; border-left: 4px solid #9ca3af; margin-bottom: 12px; }
-        .recap-card.open { border-left-color: #3b82f6; }
-        .recap-card.closed { border-left-color: #10b981; opacity: 0.75; }
+        .porto-details { display: flex; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+        .detail-item { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+        .detail-item span { color: var(--text-sub); }
         
-        .recap-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        .pair-title { font-weight: bold; font-size: 16px; margin-right: 8px; }
-        .status-pill { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; text-transform: uppercase; }
-        .status-pill.open { background: #2563eb; }
-        .status-pill.closed { background: #10b981; }
+        .btn-sell { width: 100%; padding: 12px; background: var(--red); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; text-transform: uppercase; letter-spacing: 1px; }
+        .btn-sell:hover { background: #dc2626; transform: translateY(-2px); }
+        .btn-sell:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        .recap-body p { margin: 4px 0; font-size: 13px; color: #cbd5e1; }
-        .user-notes { background: #111827; padding: 8px; border-radius: 4px; color: #9ca3af; margin-top: 6px !important; }
-        .news-badge-area { margin-top: 6px; font-size: 13px; }
-        .news-bias-text.bullish { color: #10b981; }
-        .news-bias-text.neutral { color: #f59e0b; }
-        .news-bias-text.bearish { color: #ef4444; }
+        /* SCANNER GRID */
+        .scanner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; }
+        .scan-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; transition: 0.3s; }
+        .scan-card:hover { border-color: #475569; transform: translateY(-3px); }
+        .scan-header { display: flex; justify-content: space-between; align-items: center; }
+        
+        .signal-badge { font-size: 11px; padding: 4px 10px; border-radius: 4px; font-weight: 900; letter-spacing: 0.5px; }
+        .signal-badge.strong-buy { background: #8b5cf6; color: white; box-shadow: 0 0 10px rgba(139,92,246,0.5); }
+        .signal-badge.buy { background: var(--green); color: white; }
+        .signal-badge.sell { background: var(--red); color: white; }
+        .signal-badge.hold { background: #475569; color: white; }
+        
+        .price-display { margin: 12px 0; display: flex; align-items: baseline; gap: 12px; }
+        .current-price { font-size: 24px; font-weight: 800; color: white; }
+        .change { font-size: 14px; font-weight: bold; }
+        
+        /* TECHNICAL BOX */
+        .technical-box { background: rgba(0,0,0,0.3); border: 1px solid #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
+        .tech-row { display: flex; justify-content: space-between; font-size: 12px; color: #cbd5e1; margin-bottom: 12px; }
+        .tech-row b { color: white; }
+        .pressure-container { margin-top: 8px; }
+        .progress-bar-bg { width: 100%; height: 6px; background: #1e293b; border-radius: 10px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; transition: width 0.5s ease; }
+        .pressure-label { font-size: 10px; color: #94a3b8; margin-top: 6px; text-align: right; font-style: italic; }
 
-        .edit-textarea { width: 100%; height: 50px; margin-bottom: 6px; }
-        .edit-select { width: 100%; }
+        /* AI INSIGHT BOX */
+        .ai-insight-box { background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.5); padding: 16px; border-radius: 8px; margin-bottom: 20px; }
+        .insight-title { font-size: 11px; color: var(--text-sub); text-transform: uppercase; margin-bottom: 8px; font-weight: bold; }
+        .impact-tag { font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 8px; }
+        .impact-tag.bullish { background: rgba(16,185,129,0.2); color: var(--green); }
+        .impact-tag.bearish { background: rgba(239,68,68,0.2); color: var(--red); }
+        .impact-tag.neutral { background: rgba(148,163,184,0.2); color: #cbd5e1; }
         
-        .recap-footer { margin-top: 10px; padding-top: 8px; border-top: 1px solid #374151; font-size: 13px; display: flex; justify-content: space-between; }
+        .news-headline { font-size: 13px; font-style: italic; color: #e2e8f0; margin-bottom: 6px; }
+        .news-desc { font-size: 12px; color: #94a3b8; margin-bottom: 12px; line-height: 1.5; }
         
-        .mini-btn { padding: 4px 8px; font-size: 11px; margin-left: 4px; border: none; border-radius: 4px; cursor: pointer; color: white; font-weight: 500; }
-        .mini-btn.edit { background: #4b5563; }
-        .mini-btn.save { background: #059669; }
-        .mini-btn.delete { background: #dc2626; }
+        .target-preview { display: flex; justify-content: space-between; font-size: 11px; padding-top: 10px; border-top: 1px dashed var(--border); }
+        .target-preview b { color: #f8fafc; }
         
-        .filter-container button { background: #1f2937; color: #9ca3af; border: none; padding: 6px 12px; border-radius: 6px; margin-left: 4px; cursor: pointer; font-size: 12px; }
-        .filter-container button.active { background: #2563eb; color: white; }
-        
-        .scan-grid { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
-        .scan-card { background: #111827; padding: 16px; border-radius: 10px; border: 1px solid #1e293b; }
-        .scan-price { font-size: 14px; margin-top: 4px; color: #e4e4e7; }
-        
-        .signal-tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: bold; }
-        .signal-tag.buy { background: #10b981; color: white; }
-        .signal-tag.sell { background: #ef4444; color: white; }
-        .signal-tag.hold { background: #4b5563; color: white; }
-        
-        .narrative-box { background: #1e293b; padding: 10px; border-radius: 6px; margin-top: 10px; }
-        .narrative-line { font-size: 12px; color: #cbd5e1; margin-bottom: 2px; }
-        
-        .push-to-crud-btn { background: transparent; border: 1px dashed #3b82f6; color: #60a5fa; width: 100%; padding: 8px; border-radius: 6px; margin-top: 10px; cursor: pointer; font-size: 12px; font-weight: 500; }
-        .push-to-crud-btn:hover { background: #1e3a8a; color: white; }
+        .btn-buy { width: 100%; padding: 14px; background: var(--blue); color: white; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; transition: 0.2s; font-size: 14px; box-shadow: 0 4px 12px rgba(59,130,246,0.2); }
+        .btn-buy:hover { background: #2563eb; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(59,130,246,0.3); }
+        .btn-buy:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .text-green { color: var(--green) !important; }
+        .text-red { color: var(--red) !important; }
       `}} />
     </div>
   );
