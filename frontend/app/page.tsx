@@ -9,228 +9,131 @@ export default function Page() {
   const [data, setData] = useState<any>(null);
   const [connected, setConnected] = useState(false);
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [history, setHistory] = useState<any[]>([]);
-  const [news, setNews] = useState<any[]>([]);
-  const [filter, setFilter] = useState<"ALL" | "BUY" | "SELL">("ALL");
-  const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState("ALL");
 
-  // ================= SOCKET =================
   useEffect(() => {
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    socket.on("v12_fixed", (res) => {
-      setData(res);
-    });
+    socket.on("v12_fixed", (res) => setData(res));
 
-    return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("v12_fixed");
-    };
+    return () => socket.off("v12_fixed");
   }, []);
 
-  // ================= LOAD =================
-  const loadPortfolio = async () => {
-    const res = await fetch(`${API}/portfolio`);
-    setPortfolio(await res.json());
-  };
+  const coins = useMemo(() => data?.top || [], [data]);
 
-  const loadHistory = async () => {
-    const res = await fetch(`${API}/market/history`);
-    if (res.ok) setHistory(await res.json());
-  };
-
-  const loadNews = async () => {
-    setNews([
-      { title: "Market volatility meningkat", impact: "HIGH", direction: "BEARISH" },
-      { title: "Whale accumulation terdeteksi", impact: "HIGH", direction: "BULLISH" },
-      { title: "BTC sideways dominan", impact: "MEDIUM", direction: "SIDEWAYS" }
-    ]);
-  };
-
-  useEffect(() => {
-    loadPortfolio();
-    loadHistory();
-    loadNews();
-  }, []);
-
-  // ================= SAFE COINS =================
-  const coins = useMemo(() => {
-    return (data?.top || []).map((c: any) => ({
-      pair: c.pair,
-      price: c.price,
-      signal: c.signal,
-      score: c.score,
-
-      // fallback UI logic (karena backend tidak kirim detail)
-      whale_score: Math.log10(c.price || 1),
-      momentum_score: c.score * 0.6,
-      liquidity_score: Math.log1p(c.price || 1),
-
-      confidence: Math.min(100, 50 + (c.score || 0) * 5),
-      risk_score: Math.abs(c.score || 0),
-
-      tp1: (c.price || 0) * 1.03,
-      tp2: (c.price || 0) * 1.06,
-      sl: (c.price || 0) * 0.98
-    }));
-  }, [data]);
-
-  // ================= FILTER =================
-  const filteredCoins =
+  const filtered =
     filter === "ALL"
       ? coins
       : coins.filter((c: any) => c.signal === filter);
 
-  // ================= MARKET DIRECTION =================
-  const marketDirection = useMemo(() => {
-    if (!coins.length) return "UNKNOWN";
-
-    const buy = coins.filter((c: any) => c.signal === "BUY").length;
-    const sell = coins.filter((c: any) => c.signal === "SELL").length;
-
-    if (buy > sell + 2) return "BULLISH";
-    if (sell > buy + 2) return "BEARISH";
-    return "SIDEWAYS";
-  }, [coins]);
-
-  // ================= BUY =================
-  const addPortfolio = async (coin: any) => {
-    try {
-      setLoading(true);
-
-      const payload = {
-        pair: coin.pair,
-        price: coin.price,
+  const buy = async (c: any) => {
+    await fetch(`${API}/buy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pair: c.pair,
+        price: c.price,
         amount: 1
-      };
+      })
+    });
 
-      await fetch(`${API}/buy`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      await loadPortfolio();
-
-    } catch (e: any) {
-      alert(e.message);
-    } finally {
-      setLoading(false);
-    }
+    const res = await fetch(`${API}/portfolio`);
+    setPortfolio(await res.json());
   };
 
-  // ================= SELL =================
-  const sellPortfolio = async (id: number) => {
+  const sell = async (id: number) => {
     await fetch(`${API}/sell`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
 
-    loadPortfolio();
+    const res = await fetch(`${API}/portfolio`);
+    setPortfolio(await res.json());
   };
 
+  const direction =
+    coins.filter((c: any) => c.signal === "BUY").length >
+    coins.filter((c: any) => c.signal === "SELL").length
+      ? "BULLISH"
+      : "BEARISH";
+
   return (
-    <div className="dashboard">
+    <div className="app">
 
-      {/* HEADER */}
-      <div className="topbar">
-        <div>
-          <h2>INSTITUTIONAL AI TRADING TERMINAL</h2>
-          <p>Real-time Quant Monitoring System</p>
-        </div>
+      <h2>INSTITUTIONAL TRADING DASHBOARD</h2>
+      <p>{connected ? "🟢 LIVE" : "🔴 OFFLINE"}</p>
 
-        <div className={`status ${connected ? "on" : "off"}`}>
-          {connected ? "LIVE" : "OFFLINE"}
-        </div>
+      {/* WARNING MULTILAYER */}
+      <div className={`warning ${direction}`}>
+        ⚠ MARKET: {direction}  
+        ⚠ HIGH VOLATILITY DETECTED  
+        ⚠ ALWAYS USE TP & SL  
+        ⚠ DO NOT OVERLEVERAGE  
+        ⚠ ENTRY WITHOUT CONFIRMATION IS RISKY
       </div>
 
-      {/* WARNING */}
-      <div className={`warning ${marketDirection}`}>
-        ⚠ MARKET: {marketDirection}  
-        ⚠ Jangan entry tanpa konfirmasi trend  
-        ⚠ Gunakan TP & SL wajib  
-        ⚠ Hindari over-leverage saat volatilitas tinggi
+      <div className="btc">
+        BTC: {data?.btc} | CHANGE: {data?.btcChange}%
       </div>
 
-      {/* BTC */}
-      <div className="card">
-        <h3>BTC PRICE</h3>
-        <h1>{data?.btc ?? "-"}</h1>
-      </div>
-
-      {/* NEWS */}
-      <div className="news">
-        <h3>NEWS</h3>
-        {news.map((n, i) => (
-          <div key={i} className={`news-item ${n.direction}`}>
-            <b>{n.title}</b>
-            <span>{n.impact}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* FILTER */}
-      <div className="row">
-        <button onClick={() => setFilter("ALL")}>ALL</button>
-        <button onClick={() => setFilter("BUY")}>BUY</button>
-        <button onClick={() => setFilter("SELL")}>SELL</button>
-      </div>
-
-      {/* MARKET */}
       <div className="grid">
-        {filteredCoins.map((c: any, i: number) => (
-          <div className="coin" key={i}>
+        {filtered.map((c: any, i: number) => (
+          <div className="card" key={i}>
 
-            <div className="coin-head">
-              <b>{c.pair}</b>
-              <span className={c.signal}>{c.signal}</span>
+            <h3>{c.pair} ({c.signal})</h3>
+
+            <div>ENTRY: {c.entry}</div>
+            <div>TP1: {c.tp1}</div>
+            <div>TP2: {c.tp2}</div>
+            <div>SL: {c.sl}</div>
+
+            <hr />
+
+            <div>WHALE: {c.whale_score?.toFixed(2)}</div>
+            <div>MOMENTUM: {c.momentum_score?.toFixed(2)}</div>
+            <div>CONFIDENCE: {c.confidence?.toFixed(1)}%</div>
+            <div>RISK: {c.risk_score?.toFixed(2)}</div>
+
+            <div className={`warn ${c.warning_level}`}>
+              ⚠ LEVEL: {c.warning_level}
             </div>
 
-            <div>PRICE: {c.price}</div>
-
-            <div className="tp">
-              <div>ENTRY: {c.price}</div>
-              <div>TP1: {c.tp1}</div>
-              <div>TP2: {c.tp2}</div>
-              <div>SL: {c.sl}</div>
-            </div>
-
-            <div className="reason">
-              <b>REASON:</b>
-              <ul>
-                <li>Whale: {c.whale_score.toFixed(2)}</li>
-                <li>Momentum: {c.momentum_score.toFixed(2)}</li>
-                <li>Liquidity: {c.liquidity_score.toFixed(2)}</li>
-                <li>Confidence: {c.confidence.toFixed(1)}%</li>
-                <li>Risk: {c.risk_score.toFixed(2)}</li>
-              </ul>
-            </div>
-
-            <button onClick={() => addPortfolio(c)} disabled={loading}>
-              BUY
-            </button>
-
+            <button onClick={() => buy(c)}>BUY</button>
           </div>
         ))}
       </div>
 
-      {/* PORTFOLIO */}
       <h3>PORTFOLIO</h3>
-      <div className="list">
-        {portfolio.map((p: any) => (
-          <div key={p.id} className="item">
-            <div>
-              <b>{p.pair}</b>
-              <small>ENTRY: {p.entry_price}</small>
-              <small>PNL: {p.pnl}</small>
-            </div>
-            <button onClick={() => sellPortfolio(p.id)}>SELL</button>
-          </div>
-        ))}
-      </div>
+
+      {portfolio.map((p) => (
+        <div key={p.id} className="p">
+          {p.pair} | ENTRY: {p.entry_price} | PNL: {p.pnl}
+          <button onClick={() => sell(p.id)}>SELL</button>
+        </div>
+      ))}
+
+      <style jsx>{`
+        .app { background:#0b0f1a; color:white; padding:20px; }
+
+        .warning { padding:10px; margin:10px 0; background:#1f2937; }
+
+        .BULLISH { border-left:4px solid #22c55e; }
+        .BEARISH { border-left:4px solid #ef4444; }
+
+        .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+
+        .card { background:#111827; padding:10px; border-radius:8px; }
+
+        .warn { margin-top:5px; font-size:11px; }
+        .EXTREME { color:red; }
+        .HIGH { color:orange; }
+        .MEDIUM { color:yellow; }
+        .LOW { color:green; }
+
+        .p { background:#1f2937; margin-top:8px; padding:8px; }
+      `}</style>
 
     </div>
   );
