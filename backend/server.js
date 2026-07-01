@@ -30,7 +30,7 @@ async function initDB() {
       id SERIAL PRIMARY KEY,
       pair TEXT,
       entry_price FLOAT,
-      amount FLOAT,
+      amount FLOAT DEFAULT 1,
       status TEXT DEFAULT 'OPEN',
       pnl FLOAT DEFAULT 0,
       created_at TIMESTAMP DEFAULT NOW()
@@ -58,9 +58,7 @@ const BASE = "https://indodax.com/api";
 
 async function getTickers() {
   try {
-    const res = await axios.get(`${BASE}/tickers`, {
-      timeout: 5000
-    });
+    const res = await axios.get(`${BASE}/tickers`, { timeout: 5000 });
     return res.data?.tickers || {};
   } catch (e) {
     console.log("API ERROR:", e.message);
@@ -68,13 +66,18 @@ async function getTickers() {
   }
 }
 
-// ================= GLOBAL CACHE =================
+// ================= CACHE =================
 let cache = {
   tickers: {},
   lastUpdate: 0
 };
 
 let streamLock = false;
+
+// auto safety unlock (anti deadlock)
+setInterval(() => {
+  streamLock = false;
+}, 10000);
 
 // ================= UTILS =================
 const num = (v) => Number(v || 0);
@@ -98,22 +101,15 @@ function analyzeCoin(t) {
     if (score > 6) signal = "BUY";
     if (score < -6) signal = "SELL";
 
-    return {
-      price,
-      vol,
-      score,
-      signal
-    };
+    return { price, vol, score, signal };
   } catch {
     return null;
   }
 }
 
-// ================= GLOBAL MARKET FETCH (ANTI-SPAM) =================
+// ================= MARKET CACHE =================
 async function updateMarket() {
   const now = Date.now();
-
-  // cache 3 detik
   if (now - cache.lastUpdate < 3000) return;
 
   cache.tickers = await getTickers();
@@ -133,21 +129,24 @@ async function updatePortfolio(market) {
 
   let equity = 0;
 
-  const updates = portfolio.map((p) => {
-    const price = num(market[p.pair]?.last);
-    if (!price) return null;
+  const tasks = [];
+
+  for (const p of portfolio) {
+    const price = num(market?.[p.pair]?.last);
+    if (!price) continue;
 
     const pnl = (price - p.entry_price) * p.amount;
-
     equity += pnl;
 
-    return pool.query(
-      "UPDATE portfolio_positions SET pnl=$1 WHERE id=$2",
-      [pnl, p.id]
+    tasks.push(
+      pool.query(
+        "UPDATE portfolio_positions SET pnl=$1 WHERE id=$2",
+        [pnl, p.id]
+      )
     );
-  }).filter(Boolean);
+  }
 
-  await Promise.all(updates);
+  await Promise.all(tasks);
 
   return equity;
 }
@@ -157,17 +156,21 @@ app.post("/buy", async (req, res) => {
   try {
     const { pair, price, amount } = req.body;
 
-    if (!pair || !price || !amount) {
+    if (!pair || !price) {
       return res.status(400).json({ error: "INVALID DATA" });
     }
 
+    const safeAmount = amount || 1;
+
     const result = await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, status)
-       VALUES ($1,$2,$3,'OPEN') RETURNING *`,
-      [pair, price, amount]
+       VALUES ($1,$2,$3,'OPEN')
+       RETURNING *`,
+      [pair, price, safeAmount]
     );
 
-    res.json(result.rows[0]);
+    res.json({ success: true, data: result.rows[0] });
+
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -184,6 +187,7 @@ app.post("/sell", async (req, res) => {
     );
 
     res.json({ success: true });
+
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -198,7 +202,7 @@ app.get("/portfolio", async (req, res) => {
   res.json(result.rows);
 });
 
-// ================= SAFE STREAM (LOCKED) =================
+// ================= STREAM =================
 async function stream(socket) {
   if (streamLock) return;
   streamLock = true;
@@ -207,23 +211,19 @@ async function stream(socket) {
     await updateMarket();
 
     const tickers = cache.tickers;
-    const results = [];
-
     const keys = Object.keys(tickers);
 
-    // PARALLEL SAFE BATCH (ANTI BLOCKING)
-    await Promise.all(
-      keys.map((k) => {
-        const r = analyzeCoin(tickers[k]);
-        if (r) results.push({ pair: k, ...r });
-      })
-    );
+    const results = [];
+
+    for (const k of keys) {
+      const r = analyzeCoin(tickers[k]);
+      if (r) results.push({ pair: k, ...r });
+    }
 
     const ranked = results.sort((a, b) => b.score - a.score);
-
     const top = ranked.slice(0, 10);
 
-    // SAFE BATCH INSERT (NO LOOP QUERY)
+    // SAFE DB INSERT
     if (top.length > 0) {
       const values = [];
       const params = [];
@@ -262,19 +262,17 @@ io.on("connection", (socket) => {
 
   const interval = setInterval(() => stream(socket), 4000);
 
-  socket.on("disconnect", () => {
-    clearInterval(interval);
-  });
+  socket.on("disconnect", () => clearInterval(interval));
 });
 
 // ================= HEALTH =================
 app.get("/", (req, res) => {
   res.json({
     status: "OK",
-    system: "V12 FIXED PRODUCTION READY BACKEND"
+    system: "V12 FIXED STABLE PRODUCTION BACKEND"
   });
 });
 
 server.listen(process.env.PORT || 3000, () => {
-  console.log("SYSTEM READY (FIXED)");
+  console.log("SYSTEM READY STABLE");
 });
