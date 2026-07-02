@@ -1,9 +1,9 @@
 import { io } from "socket.io-client";
 
-export const socket = io(
-  "https://confident-tranquility-production-ceaa.up.railway.app",
-  {
-    transports: ["polling", "websocket"],
-    withCredentials: false
-  }
-);
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://confident-tranquility-production-ceaa.up.railway.app";
+
+export const socket = io(API_URL, {
+  transports: ["websocket", "polling"],
+  withCredentials: true,
+  autoConnect: false,
+});
