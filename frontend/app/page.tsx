@@ -3,7 +3,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { socket } from "@/lib/socket";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "https://confident-tranquility-production-ceaa.up.railway.app";
+// Mengambil URL dari env, jika tidak ada pakai lokal
+const rawAPI = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
+// Otomatis menghapus tanda miring di akhir jika tidak sengaja tertulis
+const API = rawAPI.endsWith('/') ? rawAPI.slice(0, -1) : rawAPI;
 
 export default function Page() {
   const [data, setData] = useState<{ btc: string | number; top: any[]; watchlist: any[] }>({ btc: 0, top: [], watchlist: [] });
