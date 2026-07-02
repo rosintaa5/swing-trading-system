@@ -1,274 +1,435 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { socket } from "@/lib/socket";
 
-const API = "https://confident-tranquility-production-ceaa.up.railway.app";
+const API = process.env.NEXT_PUBLIC_API_URL || "https://confident-tranquility-production-ceaa.up.railway.app";
 
 export default function Page() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<{ btc: string | number; top: any[]; watchlist: any[] }>({ btc: 0, top: [], watchlist: [] });
   const [portfolio, setPortfolio] = useState<any[]>([]);
+  const [activeTab, setActiveTab] = useState<"scanner" | "watchlist" | "portfolio">("scanner");
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
 
   useEffect(() => {
-    socket.on("market_data", (res) => {
-      setData(res);
-      if (res.portfolio) setPortfolio(res.portfolio);
+    socket.connect();
+
+    socket.on("connect", () => {
+      setIsConnected(true);
+      setErrorMessage(null);
     });
-    return () => { socket.off("market_data"); };
+
+    socket.on("disconnect", () => {
+      setIsConnected(false);
+    });
+
+    socket.on("connect_error", () => {
+      setIsConnected(false);
+      setErrorMessage("Koneksi terputus dengan Node Server. Mencoba menghubungkan kembali...");
+    });
+
+    socket.on("market_data", (res) => {
+      if (!res.initial) {
+        setData({
+          btc: res.btc || 0,
+          top: res.top || [],
+          watchlist: res.watchlist || []
+        });
+        if (res.portfolio) {
+          setPortfolio(res.portfolio);
+        }
+      }
+    });
+
+    return () => {
+      socket.off("market_data");
+      socket.off("connect_error");
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.disconnect();
+    };
   }, []);
 
-  const loadPortfolio = async () => {
-    const res = await fetch(`${API}/portfolio`);
-    if (res.ok) setPortfolio(await res.json());
-  };
+  const loadDataManual = useCallback(async () => {
+    try {
+      const res = await fetch(`${API}/portfolio`);
+      if (res.ok) setPortfolio(await res.json());
+    } catch (e) {
+      console.error("Gagal menyinkronkan data", e);
+    }
+  }, []);
 
   const handleBuy = async (coin: any) => {
-    setLoadingAction(coin.pair);
-    const tp = coin.price * 1.05; 
-    const sl = coin.price * 0.97; 
+    setLoadingAction(`buy_${coin.pair}`);
+    
+    // Manajemen Risiko Dinamis berbasis Volatilitas Historis Harian Pasar
+    const volatilityPercent = parseFloat(coin.technicals.volatility) / 100;
+    const dynamicTP = coin.price * (1 + (volatilityPercent * 1.5)); // Take Profit: 1.5x dari nilai volatilitas koin
+    const dynamicSL = coin.price * (1 - volatilityPercent);         // Stop Loss: 1x nilai volatilitas koin
     
     try {
-      await fetch(`${API}/buy`, {
+      const res = await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pair: coin.pair,
           entry_price: coin.price,
-          target_tp: tp,
-          target_sl: sl,
+          target_tp: parseFloat(dynamicTP.toFixed(2)),
+          target_sl: parseFloat(dynamicSL.toFixed(2)),
           news_headline: coin.news_headline,
           news_impact: coin.news_impact
         })
       });
-      loadPortfolio();
+      
+      if (!res.ok) throw new Error();
+      await loadDataManual();
+      alert(`Berhasil membuka posisi pada ${coin.pair.toUpperCase()} dengan batas risiko dinamis.`);
     } catch (e) {
-      console.error(e);
+      alert("Gagal melakukan aksi eksekusi portofolio.");
     } finally {
       setLoadingAction(null);
     }
   };
 
-  const handleSell = async (id: number) => {
+  const handleSell = async (id: number, pairName: string) => {
     setLoadingAction(`sell_${id}`);
     try {
-      await fetch(`${API}/sell`, {
+      const res = await fetch(`${API}/sell`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id })
       });
-      loadPortfolio(); 
+      
+      if (!res.ok) throw new Error();
+      await loadDataManual();
+      alert(`Posisi ${pairName.toUpperCase()} berhasil ditutup & direkam.`);
     } catch (e) {
-      console.error(e);
+      alert("Gagal menutup posisi.");
     } finally {
       setLoadingAction(null);
     }
   };
 
-  const activeCoins = data?.top || [];
+  const toggleWatchlist = async (pair: string, isCurrentlyWatched: boolean) => {
+    setLoadingAction(`watch_${pair}`);
+    try {
+      if (isCurrentlyWatched) {
+        await fetch(`${API}/watchlist/${pair}`, { method: "DELETE" });
+      } else {
+        await fetch(`${API}/watchlist`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pair })
+        });
+      }
+    } catch (e) {
+      console.error("Gagal memperbarui status pantauan koin.", e);
+    } finally {
+      setLoadingAction(null);
+    }
+  };
 
-  // Helper untuk progress bar Buying Pressure
   const getPressureColor = (val: number) => {
-    if (val >= 80) return "#10b981"; // Bullish Overbought
-    if (val <= 20) return "#8b5cf6"; // Oversold (Peluang Reversal)
-    return "#3b82f6"; // Netral
+    if (val >= 80) return "#10b981"; 
+    if (val <= 20) return "#8b5cf6"; 
+    return "#3b82f6"; 
   };
 
   return (
-    <div className="dashboard">
-      <header className="header">
+    <div className="terminal-dashboard">
+      <header className="terminal-header">
         <div>
-          <h1>⚡ AI TRADING TERMINAL V2</h1>
-          <p>Advanced Quantitative Metrics | BTC: {data?.btc ? parseFloat(data.btc).toLocaleString() : "Loading..."} IDR</p>
+          <h1>⚡ QUANT INVESTMENT TERMINAL</h1>
+          <p>Sistem Pantauan & Pendeteksi Momentum Swing Crypto | BTC: {data.btc ? parseFloat(data.btc as string).toLocaleString() : "..."} IDR</p>
         </div>
-        <div className="status-indicator">
-          <span className="dot animate-pulse"></span> QUANTS ONLINE
+        <div className="connection-tag">
+          <span className={`status-dot ${isConnected ? 'online animate-pulse' : 'offline'}`}></span>
+          {isConnected ? 'LIVE ENGINE ON' : 'CONNECTING ERROR'}
         </div>
       </header>
 
-      {/* PORTFOLIO SECTION */}
-      <section className="section-container portfolio-section">
-        <h2 className="section-title">💼 MY PORTFOLIO (LIVE POSITIONS)</h2>
-        
-        {portfolio.length === 0 ? (
-          <div className="empty-state">Portofolio kosong. Silakan beli koin dari Market Scanner di bawah.</div>
-        ) : (
-          <div className="portfolio-grid">
-            {portfolio.map((p) => (
-              <div key={p.id} className="porto-card">
-                <div className="porto-header">
-                  <h3 className="coin-name">{p.pair.replace("_", " / ").toUpperCase()}</h3>
-                  <div className={`pnl-badge ${p.pnl >= 0 ? "profit" : "loss"}`}>
-                    {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString()} IDR
+      {errorMessage && <div className="system-error-banner">{errorMessage}</div>}
+
+      {/* Navigasi Menu Tab Utama */}
+      <nav className="tab-navigation">
+        <button className={activeTab === "scanner" ? "tab-btn active" : "tab-btn"} onClick={() => setActiveTab("scanner")}>
+          📡 Market Scanner ({data.top.length})
+        </button>
+        <button className={activeTab === "watchlist" ? "tab-btn active" : "tab-btn"} onClick={() => setActiveTab("watchlist")}>
+          👁️ Daftar Pantauan ({data.watchlist.length})
+        </button>
+        <button className={activeTab === "portfolio" ? "tab-btn active" : "tab-btn"} onClick={() => setActiveTab("portfolio")}>
+          💼 Posisi Aktif ({portfolio.length})
+        </button>
+      </nav>
+
+      {/* TAB CONTAINER 1: SCANNER */}
+      {activeTab === "scanner" && (
+        <section className="terminal-section">
+          <h2 className="section-title">Algorithmic Scanner (Skor Momentum Tertinggi)</h2>
+          {data.top.length === 0 ? (
+            <div className="loading-state-box">Menganalisis pergerakan data dari bursa Indodax...</div>
+          ) : (
+            <div className="terminal-grid">
+              {data.top.map((c: any) => (
+                <div key={c.pair} className="coin-data-card">
+                  <div className="card-top-row">
+                    <h3>{c.pair.replace("_", " / ").toUpperCase()}</h3>
+                    <div className="action-row-header">
+                      <button 
+                        className={`btn-watch-toggle ${c.isWatched ? 'watched' : ''}`}
+                        onClick={() => toggleWatchlist(c.pair, c.isWatched)}
+                        disabled={loadingAction === `watch_${c.pair}`}
+                      >
+                        {c.isWatched ? "👁️ Dipantau" : "➕ Pantau"}
+                      </button>
+                      <span className={`signal-tag ${c.signal.replace(" ", "-").toLowerCase()}`}>{c.signal}</span>
+                    </div>
                   </div>
-                </div>
 
-                <div className="porto-details">
-                  <div className="detail-item"><span>Entry Price</span><strong>{p.entry_price?.toLocaleString()}</strong></div>
-                  <div className="detail-item"><span>Target TP (+5%)</span><strong className="text-green">{p.target_tp?.toLocaleString()}</strong></div>
-                  <div className="detail-item"><span>Stop Loss (-3%)</span><strong className="text-red">{p.target_sl?.toLocaleString()}</strong></div>
-                </div>
-
-                <button className="btn-sell" onClick={() => handleSell(p.id)} disabled={loadingAction === `sell_${p.id}`}>
-                  {loadingAction === `sell_${p.id}` ? "SELLING..." : "SELL & CLOSE POSITION"}
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* SCANNER SECTION */}
-      <section className="section-container scanner-section">
-        <h2 className="section-title">📡 MARKET SCANNER & TECHNICAL INSIGHTS</h2>
-        
-        <div className="scanner-grid">
-          {activeCoins.map((c: any) => (
-            <div key={c.pair} className="scan-card">
-              <div className="scan-header">
-                <h3 className="coin-name">{c.pair.replace("_", " / ").toUpperCase()}</h3>
-                <span className={`signal-badge ${c.signal.replace(" ", "-").toLowerCase()}`}>{c.signal}</span>
-              </div>
-              
-              <div className="price-display">
-                <span className="current-price">{c.price.toLocaleString()} IDR</span>
-                <span className={`change ${c.change >= 0 ? "text-green" : "text-red"}`}>
-                  {c.change >= 0 ? "↗" : "↘"} {c.change?.toFixed(2)}%
-                </span>
-              </div>
-
-              {/* TECHNICAL METRICS BOX (NEW) */}
-              <div className="technical-box">
-                <div className="tech-row">
-                  <span>Volatilitas: <b>{c.technicals.volatility}%</b></span>
-                  <span>Spread Jual/Beli: <b style={{ color: parseFloat(c.technicals.spread) > 2 ? "#ef4444" : "#10b981" }}>{c.technicals.spread}%</b></span>
-                </div>
-                
-                <div className="pressure-container">
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: "4px" }}>
-                    <span>Tekanan Beli (Stochastic)</span>
-                    <span>{c.technicals.buying_pressure}%</span>
+                  <div className="card-price-row">
+                    <span className="live-price-text">{c.price.toLocaleString()} IDR</span>
+                    <span className={`price-change-pct ${c.change >= 0 ? "positive" : "negative"}`}>
+                      {c.change >= 0 ? "↗" : "↘"} {c.change?.toFixed(2)}%
+                    </span>
                   </div>
-                  <div className="progress-bar-bg">
-                    <div 
-                      className="progress-bar-fill" 
-                      style={{ 
-                        width: `${c.technicals.buying_pressure}%`, 
-                        background: getPressureColor(parseFloat(c.technicals.buying_pressure)) 
-                      }}
-                    ></div>
+
+                  <div className="technical-metrics-inner">
+                    <div className="metric-metric-row">
+                      <span>Volatilitas Pasar: <b>{c.technicals.volatility}%</b></span>
+                      <span>Spread Orderbook: <b style={{ color: parseFloat(c.technicals.spread) > 1.5 ? "#ef4444" : "#10b981" }}>{c.technicals.spread}%</b></span>
+                    </div>
+                    <div className="pressure-bar-wrapper">
+                      <div className="pressure-bar-label">
+                        <span>Tekanan Beli Pasar</span>
+                        <span>{c.technicals.buying_pressure}%</span>
+                      </div>
+                      <div className="bar-background">
+                        <div className="bar-fill-color" style={{ width: `${c.technicals.buying_pressure}%`, background: getPressureColor(parseFloat(c.technicals.buying_pressure)) }}></div>
+                      </div>
+                    </div>
                   </div>
-                  <p className="pressure-label">
-                    {parseFloat(c.technicals.buying_pressure) >= 80 ? "🔥 Area Breakout / Overbought" : 
-                     parseFloat(c.technicals.buying_pressure) <= 20 ? "📉 Area Oversold (Potensi Pantulan)" : "⚖️ Konsolidasi Netral"}
-                  </p>
-                </div>
-              </div>
 
-              {/* AI INSIGHTS & NEWS */}
-              <div className="ai-insight-box">
-                <div className="insight-title">Analisis Sentimen:</div>
-                <div className="news-badge-container">
-                  <span className={`impact-tag ${c.news_impact.toLowerCase()}`}>
-                    {c.news_impact} BIAS
-                  </span>
-                </div>
-                <p className="news-headline">"{c.news_headline}"</p>
-                <p className="news-desc"><strong>Pengaruh:</strong> {c.impact_desc}</p>
-                
-                <div className="target-preview">
-                  <span>Proyeksi TP: <b>{(c.price * 1.05).toLocaleString()}</b></span>
-                  <span>Proyeksi SL: <b>{(c.price * 0.97).toLocaleString()}</b></span>
-                </div>
-              </div>
+                  <div className="ai-interpretation-container">
+                    <span className={`bias-indicator ${c.news_impact.toLowerCase()}`}>{c.news_impact} BIAS</span>
+                    <p className="interpretation-headline">"{c.news_headline}"</p>
+                    <p className="interpretation-subtext">{c.impact_desc}</p>
+                  </div>
 
-              <button className="btn-buy" onClick={() => handleBuy(c)} disabled={loadingAction === c.pair}>
-                {loadingAction === c.pair ? "PROSESSING..." : "⚡ CLICK TO BUY"}
-              </button>
+                  <button className="btn-action-buy" onClick={() => handleBuy(c)} disabled={loadingAction === `buy_${c.pair}`}>
+                    {loadingAction === `buy_${c.pair}` ? "Memproses Posisi..." : "⚡ Buka Posisi"}
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </section>
+          )}
+        </section>
+      )}
 
-      {/* STYLES */}
+      {/* TAB CONTAINER 2: WATCHLIST */}
+      {activeTab === "watchlist" && (
+        <section className="terminal-section">
+          <h2 className="section-title">Koin Dalam Pengawasan Khusus</h2>
+          {data.watchlist.length === 0 ? (
+            <div className="empty-state-box">Tidak ada koin di dalam daftar pantauan Anda. Tambahkan melalui Market Scanner.</div>
+          ) : (
+            <div className="terminal-grid">
+              {data.watchlist.map((c: any) => (
+                <div key={c.pair} className="coin-data-card watched-highlight">
+                  <div className="card-top-row">
+                    <h3>{c.pair.replace("_", " / ").toUpperCase()}</h3>
+                    <div className="action-row-header">
+                      <button className="btn-watch-toggle watched" onClick={() => toggleWatchlist(c.pair, true)}>
+                        ❌ Hapus
+                      </button>
+                      <span className={`signal-tag ${c.signal.replace(" ", "-").toLowerCase()}`}>{c.signal}</span>
+                    </div>
+                  </div>
+
+                  <div className="card-price-row">
+                    <span className="live-price-text">{c.price.toLocaleString()} IDR</span>
+                    <span className={`price-change-pct ${c.change >= 0 ? "positive" : "negative"}`}>
+                      {c.change >= 0 ? "↗" : "↘"} {c.change?.toFixed(2)}%
+                    </span>
+                  </div>
+
+                  <div className="technical-metrics-inner">
+                    <div className="metric-metric-row">
+                      <span>Volatilitas: <b>{c.technicals.volatility}%</b></span>
+                      <span>Skor Kuantitatif: <b>{c.score.toFixed(1)} / 20</b></span>
+                    </div>
+                  </div>
+
+                  <div className="ai-interpretation-container">
+                    <p className="interpretation-headline" style={{ marginTop: "0" }}>"{c.news_headline}"</p>
+                  </div>
+
+                  <button className="btn-action-buy" onClick={() => handleBuy(c)} disabled={loadingAction === `buy_${c.pair}`}>
+                    ⚡ Buka Posisi Dari Pantauan
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* TAB CONTAINER 3: PORTFOLIO */}
+      {activeTab === "portfolio" && (
+        <section className="terminal-section">
+          <h2 className="section-title">Buku Portofolio & Posisi Terbuka Terkini</h2>
+          {portfolio.length === 0 ? (
+            <div className="empty-state-box">Anda saat ini tidak memegang posisi aset trading aktif.</div>
+          ) : (
+            <div className="portfolio-flex-list">
+              {portfolio.map((p) => (
+                <div key={p.id} className="portfolio-row-card">
+                  <div className="portfolio-main-info">
+                    <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
+                    <span className="portfolio-date">Terbuka: {new Date(p.created_at).toLocaleString('id-ID')}</span>
+                  </div>
+                  
+                  <div className="portfolio-pricing-data">
+                    <div className="price-sub-block"><span>Harga Masuk</span><b>{p.entry_price?.toLocaleString()} IDR</b></div>
+                    <div className="price-sub-block"><span>Target TP (Dinamis)</span><b className="text-green">{p.target_tp?.toLocaleString()}</b></div>
+                    <div className="price-sub-block"><span>Stop Loss (Dinamis)</span><b className="text-red">{p.target_sl?.toLocaleString()}</b></div>
+                  </div>
+
+                  <div className="portfolio-pnl-block">
+                    <span>Keuntungan / Kerugian</span>
+                    <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
+                      {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString()} IDR
+                    </strong>
+                  </div>
+
+                  <button className="btn-close-trading" onClick={() => handleSell(p.id, p.pair)} disabled={loadingAction === `sell_${p.id}`}>
+                    {loadingAction === `sell_${p.id}` ? "Menutup Posisi..." : "Tutup Posisi"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* EMBEDDED SYSTEM TERMINAL STYLESHEET */}
       <style dangerouslySetInnerHTML={{ __html: `
-        :root { --bg: #0a0e17; --card: #131b2c; --border: #223049; --green: #10b981; --red: #ef4444; --blue: #3b82f6; --text-main: #f8fafc; --text-sub: #94a3b8; }
+        :root {
+          --bg-main: #070a13;
+          --bg-card: #0f1524;
+          --bg-inner: #151d33;
+          --border-color: #1e2942;
+          --text-primary: #f1f5f9;
+          --text-secondary: #94a3b8;
+          --color-green: #10b981;
+          --color-red: #ef4444;
+          --color-blue: #2563eb;
+          --color-purple: #8b5cf6;
+        }
+        
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        .dashboard { background: var(--bg); color: var(--text-main); min-height: 100vh; padding: 24px; font-family: 'Inter', system-ui, sans-serif; }
+        body { background-color: var(--bg-main); color: var(--text-primary); font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, Roboto, sans-serif; }
         
-        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
-        .header h1 { font-size: 22px; letter-spacing: 1px; color: #60a5fa; }
-        .header p { color: var(--text-sub); font-size: 13px; margin-top: 4px; }
+        .terminal-dashboard { padding: 30px; max-width: 1400px; margin: 0 auto; }
         
-        .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: bold; color: var(--green); background: rgba(16,185,129,0.1); padding: 6px 12px; border-radius: 20px; border: 1px solid rgba(16,185,129,0.2); }
-        .dot { width: 8px; height: 8px; background: var(--green); border-radius: 50%; }
+        .terminal-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); margin-bottom: 25px; }
+        .terminal-header h1 { font-size: 24px; font-weight: 800; letter-spacing: 0.5px; color: #3b82f6; }
+        .terminal-header p { font-size: 13px; color: var(--text-secondary); margin-top: 5px; }
         
-        .section-container { margin-bottom: 40px; }
-        .section-title { font-size: 16px; color: #cbd5e1; margin-bottom: 16px; padding-left: 10px; border-left: 4px solid var(--blue); }
+        .connection-tag { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 800; background: rgba(255,255,255,0.03); padding: 6px 14px; border-radius: 30px; border: 1px solid var(--border-color); }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .status-dot.online { background: var(--color-green); box-shadow: 0 0 8px var(--color-green); }
+        .status-dot.offline { background: var(--color-red); }
         
-        /* PORTFOLIO GRID */
-        .empty-state { background: var(--card); border: 1px dashed var(--border); padding: 30px; text-align: center; color: var(--text-sub); border-radius: 12px; }
-        .portfolio-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
-        .porto-card { background: linear-gradient(180deg, #162032 0%, var(--card) 100%); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .porto-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-        .coin-name { font-size: 18px; font-weight: 800; }
-        .pnl-badge { font-weight: 800; font-size: 15px; padding: 6px 10px; border-radius: 8px; }
-        .pnl-badge.profit { background: rgba(16,185,129,0.15); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
-        .pnl-badge.loss { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+        .system-error-banner { background: rgba(239, 68, 68, 0.1); border: 1px solid var(--color-red); color: #fca5a5; padding: 12px; border-radius: 8px; margin-bottom: 25px; font-size: 13px; text-align: center; }
         
-        .porto-details { display: flex; justify-content: space-between; background: rgba(0,0,0,0.2); padding: 12px; border-radius: 8px; margin-bottom: 16px; }
-        .detail-item { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
-        .detail-item span { color: var(--text-sub); }
+        .tab-navigation { display: flex; gap: 10px; margin-bottom: 30px; border-bottom: 1px solid var(--border-color); padding-bottom: 12px; }
+        .tab-btn { background: none; border: none; color: var(--text-secondary); padding: 10px 20px; font-size: 14px; font-weight: 600; cursor: pointer; border-radius: 6px; transition: all 0.2s; }
+        .tab-btn:hover { background: rgba(255,255,255,0.02); color: var(--text-primary); }
+        .tab-btn.active { background: var(--color-blue); color: white; }
         
-        .btn-sell { width: 100%; padding: 12px; background: var(--red); color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; text-transform: uppercase; letter-spacing: 1px; }
-        .btn-sell:hover { background: #dc2626; transform: translateY(-2px); }
-        .btn-sell:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        /* SCANNER GRID */
-        .scanner-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 20px; }
-        .scan-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; transition: 0.3s; }
-        .scan-card:hover { border-color: #475569; transform: translateY(-3px); }
-        .scan-header { display: flex; justify-content: space-between; align-items: center; }
+        .terminal-section { animation: fadeIn 0.3s ease-in-out; }
+        .section-title { font-size: 16px; font-weight: 700; color: var(--text-secondary); margin-bottom: 20px; letter-spacing: 0.5px; text-transform: uppercase; }
         
-        .signal-badge { font-size: 11px; padding: 4px 10px; border-radius: 4px; font-weight: 900; letter-spacing: 0.5px; }
-        .signal-badge.strong-buy { background: #8b5cf6; color: white; box-shadow: 0 0 10px rgba(139,92,246,0.5); }
-        .signal-badge.buy { background: var(--green); color: white; }
-        .signal-badge.sell { background: var(--red); color: white; }
-        .signal-badge.hold { background: #475569; color: white; }
+        .loading-state-box, .empty-state-box { background: var(--bg-card); border: 1px dashed var(--border-color); padding: 40px; text-align: center; color: var(--text-secondary); border-radius: 8px; font-size: 14px; }
         
-        .price-display { margin: 12px 0; display: flex; align-items: baseline; gap: 12px; }
-        .current-price { font-size: 24px; font-weight: 800; color: white; }
-        .change { font-size: 14px; font-weight: bold; }
+        /* SCANNED GRID ARCHITECTURE */
+        .terminal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
+        .coin-data-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; transition: transform 0.2s, border-color 0.2s; }
+        .coin-data-card:hover { transform: translateY(-2px); border-color: #334155; }
+        .coin-data-card.watched-highlight { border-left: 3px solid var(--color-purple); }
         
-        /* TECHNICAL BOX */
-        .technical-box { background: rgba(0,0,0,0.3); border: 1px solid #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 16px; }
-        .tech-row { display: flex; justify-content: space-between; font-size: 12px; color: #cbd5e1; margin-bottom: 12px; }
-        .tech-row b { color: white; }
-        .pressure-container { margin-top: 8px; }
-        .progress-bar-bg { width: 100%; height: 6px; background: #1e293b; border-radius: 10px; overflow: hidden; }
-        .progress-bar-fill { height: 100%; transition: width 0.5s ease; }
-        .pressure-label { font-size: 10px; color: #94a3b8; margin-top: 6px; text-align: right; font-style: italic; }
-
-        /* AI INSIGHT BOX */
-        .ai-insight-box { background: rgba(30,41,59,0.5); border: 1px solid rgba(51,65,85,0.5); padding: 16px; border-radius: 8px; margin-bottom: 20px; }
-        .insight-title { font-size: 11px; color: var(--text-sub); text-transform: uppercase; margin-bottom: 8px; font-weight: bold; }
-        .impact-tag { font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: bold; display: inline-block; margin-bottom: 8px; }
-        .impact-tag.bullish { background: rgba(16,185,129,0.2); color: var(--green); }
-        .impact-tag.bearish { background: rgba(239,68,68,0.2); color: var(--red); }
-        .impact-tag.neutral { background: rgba(148,163,184,0.2); color: #cbd5e1; }
+        .card-top-row { display: flex; justify-content: space-between; align-items: center; }
+        .card-top-row h3 { font-size: 16px; font-weight: 700; color: white; }
+        .action-row-header { display: flex; align-items: center; gap: 8px; }
         
-        .news-headline { font-size: 13px; font-style: italic; color: #e2e8f0; margin-bottom: 6px; }
-        .news-desc { font-size: 12px; color: #94a3b8; margin-bottom: 12px; line-height: 1.5; }
+        .btn-watch-toggle { background: #1e293b; border: 1px solid #334155; color: var(--text-primary); padding: 4px 10px; font-size: 11px; font-weight: 600; border-radius: 4px; cursor: pointer; transition: 0.2s; }
+        .btn-watch-toggle:hover { background: #334155; }
+        .btn-watch-toggle.watched { background: rgba(139, 92, 246, 0.2); border-color: var(--color-purple); color: #d8b4fe; }
         
-        .target-preview { display: flex; justify-content: space-between; font-size: 11px; padding-top: 10px; border-top: 1px dashed var(--border); }
-        .target-preview b { color: #f8fafc; }
+        .signal-tag { font-size: 10px; font-weight: 900; padding: 4px 8px; border-radius: 4px; letter-spacing: 0.3px; }
+        .signal-tag.strong-buy { background: var(--color-purple); color: white; }
+        .signal-tag.buy { background: var(--color-green); color: white; }
+        .signal-tag.hold { background: #475569; color: white; }
+        .signal-tag.sell { background: var(--color-red); color: white; }
         
-        .btn-buy { width: 100%; padding: 14px; background: var(--blue); color: white; border: none; border-radius: 8px; font-weight: 800; cursor: pointer; transition: 0.2s; font-size: 14px; box-shadow: 0 4px 12px rgba(59,130,246,0.2); }
-        .btn-buy:hover { background: #2563eb; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(59,130,246,0.3); }
-        .btn-buy:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        .text-green { color: var(--green) !important; }
-        .text-red { color: var(--red) !important; }
+        .card-price-row { display: flex; align-items: baseline; gap: 10px; margin: 15px 0; }
+        .live-price-text { font-size: 22px; font-weight: 800; color: white; }
+        .price-change-pct { font-size: 12px; font-weight: 700; }
+        .price-change-pct.positive { color: var(--color-green); }
+        .price-change-pct.negative { color: var(--color-red); }
+        
+        .technical-metrics-inner { background: var(--bg-inner); padding: 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.02); margin-bottom: 14px; }
+        .metric-metric-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-bottom: 10px; }
+        .metric-metric-row b { color: white; }
+        
+        .pressure-bar-wrapper { display: flex; flex-direction: column; gap: 5px; }
+        .pressure-bar-label { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); }
+        .bar-background { width: 100%; height: 5px; background: #1e293b; border-radius: 10px; overflow: hidden; }
+        .bar-fill-color { height: 100%; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+        
+        .ai-interpretation-container { background: rgba(30, 41, 59, 0.3); border: 1px solid rgba(255,255,255,0.03); padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 12px; }
+        .bias-indicator { font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 3px; display: inline-block; margin-bottom: 6px; }
+        .bias-indicator.bullish { background: rgba(16,185,129,0.15); color: var(--color-green); }
+        .bias-indicator.bearish { background: rgba(239,68,68,0.15); color: var(--color-red); }
+        .bias-indicator.neutral { background: rgba(255,255,255,0.05); color: var(--text-secondary); }
+        .interpretation-headline { color: #e2e8f0; font-style: italic; font-weight: 500; }
+        .interpretation-subtext { color: var(--text-secondary); margin-top: 4px; font-size: 11px; }
+        
+        .btn-action-buy { width: 100%; background: var(--color-blue); color: white; border: none; padding: 12px; border-radius: 6px; font-weight: 700; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+        .btn-action-buy:hover { background: #1d4ed8; }
+        .btn-action-buy:disabled { opacity: 0.4; cursor: not-allowed; }
+        
+        /* PORTFOLIO FLEX LIST CONFIG */
+        .portfolio-flex-list { display: flex; flex-direction: column; gap: 12px; }
+        .portfolio-row-card { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 16px 20px; display: flex; justify-content: space-between; align-items: center; transition: border-color 0.2s; }
+        .portfolio-row-card:hover { border-color: #334155; }
+        
+        .portfolio-main-info h3 { font-size: 16px; font-weight: 700; color: white; }
+        .portfolio-date { font-size: 11px; color: var(--text-secondary); display: block; margin-top: 4px; }
+        
+        .portfolio-pricing-data { display: flex; gap: 30px; }
+        .price-sub-block { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+        .price-sub-block span { color: var(--text-secondary); }
+        .price-sub-block b { font-size: 13px; font-weight: 600; color: #f8fafc; }
+        
+        .portfolio-pnl-block { display: flex; flex-direction: column; gap: 4px; text-align: right; min-width: 130px; }
+        .portfolio-pnl-block span { font-size: 11px; color: var(--text-secondary); }
+        .portfolio-pnl-block strong { font-size: 15px; font-weight: 800; }
+        
+        .btn-close-trading { background: var(--color-red); color: white; border: none; padding: 10px 18px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; transition: background 0.2s; }
+        .btn-close-trading:hover { background: #dc2626; }
+        .btn-close-trading:disabled { opacity: 0.4; cursor: not-allowed; }
+        
+        .text-green { color: var(--color-green) !important; }
+        .text-red { color: var(--color-red) !important; }
+        
+        @keyframes fadeIn {
+          from { opacity: 0; transform: translateY(4px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
       `}} />
     </div>
   );
