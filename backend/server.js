@@ -4,11 +4,20 @@ const { Server } = require("socket.io");
 const cors = require("cors");
 const axios = require("axios");
 const { Pool } = require("pg");
+const crypto = require("crypto"); 
+const querystring = require("querystring"); 
 require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
+
+// =========================================================================
+// 🤖 KONFIGURASI BOT AUTO-PILOT (AGRESIF) 🤖
+// =========================================================================
+const AUTO_TRADE_ENABLED = true; // Ubah ke 'false' jika ingin manual saja
+const CAPITAL_PER_TRADE = 20000; // Modal otomatis per koin (contoh: Rp 20.000)
+// =========================================================================
 
 // Middleware & Security CORS
 app.use(cors({
@@ -88,6 +97,58 @@ let latestMarketData = {
   watchlist: []
 };
 
+let isExecutingTrade = {}; 
+
+// --- FUNGSI BARU: CEK SALDO IDR INDODAX SECARA LIVE ---
+async function getIndodaxBalance() {
+  const apiKey = process.env.INDODAX_API_KEY;
+  const secretKey = process.env.INDODAX_SECRET_KEY;
+  if (!apiKey || !secretKey) return 0;
+
+  const data = { method: 'getInfo', timestamp: Date.now() };
+  const postData = querystring.stringify(data);
+  const signature = crypto.createHmac('sha512', secretKey).update(postData).digest('hex');
+
+  try {
+    const response = await axios.post('https://indodax.com/tapi', postData, {
+      headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' },
+      timeout: 5000
+    });
+    if (response.data.success === 1) {
+      return parseFloat(response.data.return.balance.idr || 0);
+    }
+  } catch (error) {
+    console.error("⚠️ Gagal mengecek saldo Indodax:", error.message);
+  }
+  return 0;
+}
+
+// --- MESIN EKSEKUSI INDODAX PRIVATE API ---
+async function executeIndodaxTrade(pair, type, price, amount) {
+  const apiKey = process.env.INDODAX_API_KEY;
+  const secretKey = process.env.INDODAX_SECRET_KEY;
+  if (!apiKey || !secretKey) throw new Error("API/Secret Key belum diatur di .env");
+
+  const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: price };
+  if (type === 'buy') data['idr'] = amount; 
+  else if (type === 'sell') data[pair.split('_')[0]] = amount;  
+
+  const postData = querystring.stringify(data);
+  const signature = crypto.createHmac('sha512', secretKey).update(postData).digest('hex');
+
+  try {
+    const response = await axios.post('https://indodax.com/tapi', postData, {
+      headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000
+    });
+    if (response.data.success === 1) {
+      console.log(`✅ AUTO-TRADE: [${type.toUpperCase()}] ${pair} sukses dieksekusi di bursa!`);
+      return response.data;
+    } else {
+      throw new Error(`Ditolak Indodax: ${response.data.error}`);
+    }
+  } catch (error) { throw error; }
+}
+
 // --- GLOBAL MARKET INTELLIGENCE (BTC TRACKER) ---
 async function updateMarket() {
   const now = Date.now();
@@ -115,7 +176,6 @@ async function updateMarket() {
           news = `🚀 LUAR BIASA! BTC terbang tinggi (${change.toFixed(2)}%). Tren pasar sangat sehat. Momentum terbaik untuk breakout koin pilihan!`;
         }
         
-        // --- NEWS FEED GENERATOR BASED ON MACRO CONDITIONS ---
         const newsList = [
           { time: new Date().toLocaleTimeString('id-ID'), title: change >= 0 ? "Analisis Algoritma: Terjadi peningkatan aktivitas dompet institusi (Whale) di pasar Spot." : "Peringatan Makro: Arus keluar dana raksasa (Outflow) menekan batas support psikologis pasar.", impact: bias },
           { time: new Date(Date.now() - 1200000).toLocaleTimeString('id-ID'), title: change > 3.0 ? "FOMO Retail mulai memuncak. Tetap waspada terhadap titik Overbought (Jenuh Beli)." : change < -3.0 ? "Kepanikan pasar (Panic Selling) memicu rentetan likuidasi massal di derivatif." : "Aliran dana perlahan berotasi dari Bitcoin menuju aset koin kapitalisasi menengah (Mid-Cap).", impact: bias === "SIDEWAYS" ? "NEUTRAL" : bias },
@@ -222,6 +282,7 @@ app.get("/portfolio", async (req, res) => {
   }
 });
 
+// ROUTE BELI MANUAL (Dari UI)
 app.post("/buy", async (req, res) => {
   const { pair, entry_price, capital, high, low, news_headline, news_impact } = req.body;
   if (!pair || !entry_price || isNaN(entry_price) || !capital || isNaN(capital)) {
@@ -238,6 +299,11 @@ app.post("/buy", async (req, res) => {
     const final_sl = Math.max(0.0001, numEntry - (dailyRange * 1.0));
     const amount = capital / numEntry; 
 
+    if (capital < 10000) throw new Error("Modal minimum Indodax Rp 10.000.");
+
+    // Eksekusi Beli Asli ke Indodax
+    await executeIndodaxTrade(pair, 'buy', numEntry, capital);
+
     await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, initial_capital, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
@@ -245,17 +311,27 @@ app.post("/buy", async (req, res) => {
     );
     res.json({ success: true, message: `Berhasil mengalokasikan Rp ${capital.toLocaleString('id-ID')} ke posisi ${pair.toUpperCase()}!` });
   } catch (err) {
-    res.status(500).json({ error: `Gagal menyimpan ke Server: ${err.message}` });
+    res.status(500).json({ error: `Gagal transaksi: ${err.message}` });
   }
 });
 
+// ROUTE JUAL MANUAL (Dari UI)
 app.post("/sell", async (req, res) => {
   const { id } = req.body;
   try {
+    const position = await pool.query("SELECT * FROM portfolio_positions WHERE id=$1 AND status='OPEN'", [id]);
+    if (position.rows.length === 0) throw new Error("Posisi tidak ditemukan.");
+    const p = position.rows[0];
+    const t = cache.tickers[p.pair];
+    if (!t) throw new Error("Gagal mengambil harga terkini.");
+    
+    // Eksekusi Jual Asli ke Indodax
+    await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.last), p.amount);
+
     await pool.query("UPDATE portfolio_positions SET status='CLOSED' WHERE id=$1", [id]);
     res.json({ success: true, message: "Posisi berhasil ditutup dan Profit/Loss direalisasikan." });
   } catch (err) {
-    res.status(500).json({ error: "Gagal mengeksekusi penutupan posisi." });
+    res.status(500).json({ error: "Gagal mengeksekusi penutupan posisi: " + err.message });
   }
 });
 
@@ -274,7 +350,7 @@ app.delete("/watchlist/:pair", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Gagal" }); }
 });
 
-// --- ENGINE LIVE SYNC BACKGROUND WORKER ---
+// --- ENGINE LIVE SYNC BACKGROUND WORKER (CORE BOT ENGINE) ---
 let isWorkerRunning = false;
 async function streamWorker() {
   if (isWorkerRunning) return;
@@ -314,10 +390,10 @@ async function streamWorker() {
     const top = results.sort((a, b) => b.score - a.score).slice(0, 20);
     const watchlistData = results.filter(r => watchPairs.includes(r.pair));
 
-    // Evaluasi Lanjutan Portofolio
     const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const portfolioData = [];
     
+    // --- EVALUASI BOT 1: CEK AUTO-SELL (TAKE PROFIT / STOP LOSS) & DASHBOARD ALERT ---
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
       let current_price = p.entry_price;
@@ -330,7 +406,7 @@ async function streamWorker() {
         pnl = (current_price - p.entry_price) * p.amount;
         pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
 
-        // Cek anomali momentum di luar TP/SL
+        // Analisis Anomali untuk UI Dashboard "Radar Posisi Darurat"
         const analyzed = results.find(r => r.pair === p.pair);
         if (analyzed) {
             if (analyzed.signal === "SELL") {
@@ -341,8 +417,59 @@ async function streamWorker() {
                 attention_reason = "⚠️ Tekanan beli menyusut tajam (Dumping Murni).";
             }
         }
+
+        // 🚨 VIRTUAL OCO TRIGGER (AUTO SELL JIKA KENA TP ATAU SL)
+        if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
+          if (current_price >= p.target_tp || current_price <= p.target_sl) {
+            isExecutingTrade[`sell_${p.id}`] = true;
+            try {
+              console.log(`🤖 BOT AUTO-SELL TRIGGERED! Kondisi: ${current_price >= p.target_tp ? 'TAKE PROFIT 🎯' : 'STOP LOSS ⚠️'} untuk ${p.pair}`);
+              await executeIndodaxTrade(p.pair, 'sell', current_price, p.amount);
+              await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
+            } catch (err) {
+              console.error(`Gagal Auto-Sell ${p.pair}:`, err.message);
+            } finally {
+              delete isExecutingTrade[`sell_${p.id}`];
+            }
+          }
+        }
       }
       portfolioData.push({ ...p, current_price, pnl, attention_needed, attention_reason });
+    }
+
+    // --- EVALUASI BOT 2: CEK AUTO-BUY BERDASARKAN KETERSEDIAAN SALDO ---
+    if (AUTO_TRADE_ENABLED) {
+      // 1. Bot mengecek saldo Rupiah asli yang Anda miliki saat ini di Indodax
+      const availableIDR = await getIndodaxBalance();
+      
+      // 2. Jika uang cukup, bot mencari koin baru
+      if (availableIDR >= CAPITAL_PER_TRADE) {
+        const activePairs = openPositions.rows.map(p => p.pair);
+        
+        // Cari koin TERBAIK yang berstatus STRONG BUY dan belum dibeli
+        const bestCoin = results.find(r => r.signal === "STRONG BUY" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
+        
+        if (bestCoin) {
+          isExecutingTrade[`buy_${bestCoin.pair}`] = true;
+          try {
+            console.log(`🤖 BOT AUTO-BUY TRIGGERED! Sniping ${bestCoin.pair} di harga ${bestCoin.price}... (Sisa Saldo: Rp ${availableIDR.toLocaleString()})`);
+            const amount = CAPITAL_PER_TRADE / bestCoin.price;
+
+            // Eksekusi Beli di Indodax
+            await executeIndodaxTrade(bestCoin.pair, 'buy', bestCoin.price, CAPITAL_PER_TRADE);
+            
+            // Catat di Database lokal
+            await pool.query(
+              `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, initial_capital, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
+              [bestCoin.pair, bestCoin.price, amount, bestCoin.target_tp, bestCoin.target_sl, bestCoin.news_headline, bestCoin.news_impact, CAPITAL_PER_TRADE]
+            );
+          } catch (err) {
+            console.error(`Gagal Auto-Buy ${bestCoin.pair}:`, err.message);
+          } finally {
+            delete isExecutingTrade[`buy_${bestCoin.pair}`];
+          }
+        }
+      }
     }
 
     latestMarketData.top = top;
