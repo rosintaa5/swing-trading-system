@@ -308,6 +308,38 @@ export default function Page() {
         </div>
       </header>
 
+      {/* PANEL SENTIMEN BITCOIN BESERTA LIVE NEWS - SELALU TERLIHAT DI ATAS TAB */}
+      <div className={`btc-regime-card ${data.btc.bias.toLowerCase()} dash-btc`}>
+        <div className="btc-info-row">
+          <div>
+            <h3>ARAH UTAMA BITCOIN (MARKET REGIME)</h3>
+            <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
+          </div>
+          <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
+            {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
+          </span>
+        </div>
+        <div className="btc-news-body">
+          <p><b>Analisis Makro:</b> {data.btc.news}</p>
+        </div>
+
+        {/* RESTORED: SECTION LIVE NEWS STREAM */}
+        {data.btc.newsList && data.btc.newsList.length > 0 && (
+          <div className="btc-news-stream">
+            <h4>📰 Live News & Analisis Jaringan</h4>
+            <ul className="news-list-items">
+              {data.btc.newsList.map((n: any, idx: number) => (
+                <li key={idx}>
+                  <span className="news-time">[{n.time}]</span> 
+                  <span className={`news-impact-tag ${n.impact.toLowerCase()}`}>{n.impact}</span>
+                  <span className="news-title">{n.title}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
       {/* PENGALIHAN NAVIGASI & FILTER */}
       <div className="control-bar">
         <nav className="tab-nav">
@@ -329,31 +361,16 @@ export default function Page() {
       {/* VIEW PANEL 0: PUSAT INTELIJEN (DASHBOARD) */}
       {activeTab === "dashboard" && (
         <section className="view-section dashboard-grid">
-          {/* KOLOM KIRI: Kesehatan & BTC */}
+          {/* KOLOM KIRI: Kesehatan & Alerts */}
           <div className="dash-col-left">
             <div className="market-health-card">
               <h3>📊 Rasio Kesehatan Altcoin Saat Ini</h3>
               <div className="health-status-text">{data.stats.health}</div>
               <div className="health-bar-container">
-                <div className="bull-bar" style={{ width: `${data.stats.bullPct}%` }}>{data.stats.bullPct}% Bulls</div>
-                <div className="bear-bar" style={{ width: `${data.stats.bearPct}%` }}>{data.stats.bearPct}% Bears</div>
+                <div className="bull-bar" style={{ width: data.stats.bullPct + '%' }}>{data.stats.bullPct}% Bulls</div>
+                <div className="bear-bar" style={{ width: data.stats.bearPct + '%' }}>{data.stats.bearPct}% Bears</div>
               </div>
               <p className="health-hint">Indikator ini mengukur sentimen keseluruhan pasar berdasarkan perubahan harga dalam 24 jam terakhir.</p>
-            </div>
-
-            <div className={`btc-regime-card ${data.btc.bias.toLowerCase()} dash-btc`}>
-              <div className="btc-info-row">
-                <div>
-                  <h3>ARAH UTAMA BITCOIN</h3>
-                  <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
-                </div>
-                <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
-                  {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
-                </span>
-              </div>
-              <div className="btc-news-body">
-                <p><b>Analisis Makro:</b> {data.btc.news}</p>
-              </div>
             </div>
 
             {urgentPositions.length > 0 ? (
@@ -370,7 +387,7 @@ export default function Page() {
                       <p className="alert-desc-text">{item.alertReason}</p>
                       {item.alertProgress > 0 && (
                         <div className="mini-progress-bg mt-2">
-                          <div className="mini-progress-fill" style={{ width: `${item.alertProgress}%` }}></div>
+                          <div className="mini-progress-fill" style={{ width: item.alertProgress + '%' }}></div>
                         </div>
                       )}
                       <button className="dash-quick-sell-btn" onClick={() => handleSell(item.id, item.pair)} disabled={loadingAction === `sell_${item.id}`}>
@@ -477,7 +494,7 @@ export default function Page() {
                       <span>{c.technicals.buying_pressure}%</span>
                     </div>
                     <div className="pressure-bar-bg">
-                      <div className="pressure-bar-fill" style={{ width: `${c.technicals.buying_pressure}%` }}></div>
+                      <div className="pressure-bar-fill" style={{ width: c.technicals.buying_pressure + '%' }}></div>
                     </div>
                   </div>
 
