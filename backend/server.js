@@ -115,6 +115,7 @@ async function updateMarket() {
           news = `🚀 LUAR BIASA! BTC terbang tinggi (${change.toFixed(2)}%). Tren pasar sangat sehat. Momentum terbaik untuk breakout koin pilihan!`;
         }
         
+        // --- NEWS FEED GENERATOR BASED ON MACRO CONDITIONS ---
         const newsList = [
           { time: new Date().toLocaleTimeString('id-ID'), title: change >= 0 ? "Analisis Algoritma: Terjadi peningkatan aktivitas dompet institusi (Whale) di pasar Spot." : "Peringatan Makro: Arus keluar dana raksasa (Outflow) menekan batas support psikologis pasar.", impact: bias },
           { time: new Date(Date.now() - 1200000).toLocaleTimeString('id-ID'), title: change > 3.0 ? "FOMO Retail mulai memuncak. Tetap waspada terhadap titik Overbought (Jenuh Beli)." : change < -3.0 ? "Kepanikan pasar (Panic Selling) memicu rentetan likuidasi massal di derivatif." : "Aliran dana perlahan berotasi dari Bitcoin menuju aset koin kapitalisasi menengah (Mid-Cap).", impact: bias === "SIDEWAYS" ? "NEUTRAL" : bias },
