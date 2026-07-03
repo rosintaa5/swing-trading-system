@@ -35,7 +35,7 @@ export default function Page() {
     isOpen: false,
     coin: null,
     customEntry: "",
-    capital: "100000" // Modal dasar default 100rb IDR
+    capital: "10000000" // Modal dasar default 10jt IDR
   });
 
   useEffect(() => {
