@@ -20,7 +20,6 @@ export default function Page() {
   });
   
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  // Mengubah default tab ke "dashboard" (Pusat Komando)
   const [activeTab, setActiveTab] = useState<"dashboard" | "scanner" | "watchlist" | "portfolio">("dashboard");
   const [signalFilter, setSignalFilter] = useState<"ALL" | "BUY_ONLY">("ALL");
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
@@ -190,7 +189,6 @@ export default function Page() {
   const totalModalActive = portfolio.reduce((sum, item) => sum + (item.initial_capital || 0), 0);
   const totalPnLActive = portfolio.reduce((sum, item) => sum + (item.pnl || 0), 0);
 
-  // --- ENGINE DASBOR: Menganalisis Koin Portofolio Yang Membutuhkan Perhatian ---
   const urgentPositions = useMemo(() => {
     return portfolio.map((p) => {
       let isUrgent = false;
@@ -198,14 +196,12 @@ export default function Page() {
       let type = "warning";
       let progressVal = 0;
 
-      // Prioritas 1: Peringatan dari Backend (Momentum memburuk dll, diluar TP/SL)
       if (p.attention_needed) {
         isUrgent = true;
         reason = p.attention_reason;
         type = "critical";
       }
 
-      // Prioritas 2: Peringatan Proksimitas (Mendekati TP / SL)
       if (p.current_price) {
         const gapTP = p.target_tp - p.entry_price;
         const gapSL = p.entry_price - p.target_sl;
@@ -221,7 +217,7 @@ export default function Page() {
           }
         } else if (move < 0 && gapSL > 0) {
           const progress = (Math.abs(move) / gapSL) * 100;
-          if (progress >= 75 && type !== "critical") { // Jangan timpa jika status critical dari backend
+          if (progress >= 75 && type !== "critical") {
             isUrgent = true;
             reason = `⚠️ Ancaman Stop Loss (${progress.toFixed(1)}%)`;
             type = "danger";
@@ -239,7 +235,7 @@ export default function Page() {
     ? data.top 
     : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
 
-  const topNominations = data.top.slice(0, 3); // Ambil 3 terbaik untuk Dashboard
+  const topNominations = data.top.slice(0, 3);
 
   return (
     <div className="trading-terminal">
@@ -339,8 +335,8 @@ export default function Page() {
               <h3>📊 Rasio Kesehatan Altcoin Saat Ini</h3>
               <div className="health-status-text">{data.stats.health}</div>
               <div className="health-bar-container">
-                <div className="bull-bar" style={{ width: \`\${data.stats.bullPct}%\` }}>{data.stats.bullPct}% Bulls</div>
-                <div className="bear-bar" style={{ width: \`\${data.stats.bearPct}%\` }}>{data.stats.bearPct}% Bears</div>
+                <div className="bull-bar" style={{ width: `${data.stats.bullPct}%` }}>{data.stats.bullPct}% Bulls</div>
+                <div className="bear-bar" style={{ width: `${data.stats.bearPct}%` }}>{data.stats.bearPct}% Bears</div>
               </div>
               <p className="health-hint">Indikator ini mengukur sentimen keseluruhan pasar berdasarkan perubahan harga dalam 24 jam terakhir.</p>
             </div>
@@ -374,7 +370,7 @@ export default function Page() {
                       <p className="alert-desc-text">{item.alertReason}</p>
                       {item.alertProgress > 0 && (
                         <div className="mini-progress-bg mt-2">
-                          <div className="mini-progress-fill" style={{ width: \`\${item.alertProgress}%\` }}></div>
+                          <div className="mini-progress-fill" style={{ width: `${item.alertProgress}%` }}></div>
                         </div>
                       )}
                       <button className="dash-quick-sell-btn" onClick={() => handleSell(item.id, item.pair)} disabled={loadingAction === `sell_${item.id}`}>
@@ -481,7 +477,7 @@ export default function Page() {
                       <span>{c.technicals.buying_pressure}%</span>
                     </div>
                     <div className="pressure-bar-bg">
-                      <div className="pressure-bar-fill" style={{ width: \`\${c.technicals.buying_pressure}%\` }}></div>
+                      <div className="pressure-bar-fill" style={{ width: `${c.technicals.buying_pressure}%` }}></div>
                     </div>
                   </div>
 
