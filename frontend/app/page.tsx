@@ -9,20 +9,23 @@ const API = rawAPI.endsWith('/') ? rawAPI.slice(0, -1) : rawAPI;
 export default function Page() {
   const [data, setData] = useState<{ 
     btc: { price: number; change: number; bias: string; news: string; newsList: any[] }; 
+    stats: { bullPct: number; bearPct: number; health: string };
     top: any[]; 
     watchlist: any[] 
   }>({ 
     btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data...", newsList: [] }, 
+    stats: { bullPct: 50, bearPct: 50, health: "MEMUAT DATA..." },
     top: [], 
     watchlist: [] 
   });
+  
   const [portfolio, setPortfolio] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<"scanner" | "watchlist" | "portfolio">("scanner");
+  // Mengubah default tab ke "dashboard" (Pusat Komando)
+  const [activeTab, setActiveTab] = useState<"dashboard" | "scanner" | "watchlist" | "portfolio">("dashboard");
   const [signalFilter, setSignalFilter] = useState<"ALL" | "BUY_ONLY">("ALL");
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
 
-  // --- STATE CUSTOM TOAST UI ---
   const [toast, setToast] = useState<{ show: boolean, msg: string, type: "success" | "error" | "info" }>({ show: false, msg: "", type: "info" });
 
   const showToast = (msg: string, type: "success" | "error" | "info") => {
@@ -30,7 +33,6 @@ export default function Page() {
     setTimeout(() => setToast({ show: false, msg: "", type: "info" }), 4000);
   };
 
-  // --- STATE BUY MODAL FORM ---
   const [buyModal, setBuyModal] = useState<{ 
     isOpen: boolean, coin: any, 
     customEntryRaw: string, customEntryDisplay: string, 
@@ -50,7 +52,12 @@ export default function Page() {
     socket.on("disconnect", () => setIsConnected(false));
     socket.on("market_data", (res) => {
       if (res) {
-        setData({ btc: res.btc, top: res.top || [], watchlist: res.watchlist || [] });
+        setData({ 
+          btc: res.btc, 
+          stats: res.stats || { bullPct: 50, bearPct: 50, health: "NEUTRAL" },
+          top: res.top || [], 
+          watchlist: res.watchlist || [] 
+        });
         if (res.portfolio) setPortfolio(res.portfolio);
       }
     });
@@ -180,29 +187,50 @@ export default function Page() {
     }
   };
 
-  // Kalkulasi Rekap PnL Total Portofolio
   const totalModalActive = portfolio.reduce((sum, item) => sum + (item.initial_capital || 0), 0);
   const totalPnLActive = portfolio.reduce((sum, item) => sum + (item.pnl || 0), 0);
 
-  // --- NEW ENGINE: TP/SL PROXIMITY ALERT SCANNER ---
-  // Sistem menganalisis koin mana yang perjalanannya sudah 75% mendekati batas TP atau SL
-  const approachingTargets = useMemo(() => {
+  // --- ENGINE DASBOR: Menganalisis Koin Portofolio Yang Membutuhkan Perhatian ---
+  const urgentPositions = useMemo(() => {
     return portfolio.map((p) => {
-      if (!p.current_price) return null;
-      const gapTP = p.target_tp - p.entry_price;
-      const gapSL = p.entry_price - p.target_sl;
-      const move = p.current_price - p.entry_price;
+      let isUrgent = false;
+      let reason = "";
+      let type = "warning";
+      let progressVal = 0;
 
-      // Harga sedang naik (Profit)
-      if (move > 0 && gapTP > 0) {
-        const progress = (move / gapTP) * 100;
-        if (progress >= 75) return { ...p, type: 'TP', progress: Math.min(progress, 100) };
-      } 
-      // Harga sedang turun (Rugi)
-      else if (move < 0 && gapSL > 0) {
-        const progress = (Math.abs(move) / gapSL) * 100;
-        if (progress >= 75) return { ...p, type: 'SL', progress: Math.min(progress, 100) };
+      // Prioritas 1: Peringatan dari Backend (Momentum memburuk dll, diluar TP/SL)
+      if (p.attention_needed) {
+        isUrgent = true;
+        reason = p.attention_reason;
+        type = "critical";
       }
+
+      // Prioritas 2: Peringatan Proksimitas (Mendekati TP / SL)
+      if (p.current_price) {
+        const gapTP = p.target_tp - p.entry_price;
+        const gapSL = p.entry_price - p.target_sl;
+        const move = p.current_price - p.entry_price;
+
+        if (move > 0 && gapTP > 0) {
+          const progress = (move / gapTP) * 100;
+          if (progress >= 75) {
+            isUrgent = true;
+            reason = `🎯 Mendekati Take Profit (${progress.toFixed(1)}%)`;
+            type = "success";
+            progressVal = Math.min(progress, 100);
+          }
+        } else if (move < 0 && gapSL > 0) {
+          const progress = (Math.abs(move) / gapSL) * 100;
+          if (progress >= 75 && type !== "critical") { // Jangan timpa jika status critical dari backend
+            isUrgent = true;
+            reason = `⚠️ Ancaman Stop Loss (${progress.toFixed(1)}%)`;
+            type = "danger";
+            progressVal = Math.min(progress, 100);
+          }
+        }
+      }
+
+      if (isUrgent) return { ...p, alertReason: reason, alertType: type, alertProgress: progressVal };
       return null;
     }).filter(Boolean);
   }, [portfolio]);
@@ -211,9 +239,11 @@ export default function Page() {
     ? data.top 
     : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
 
+  const topNominations = data.top.slice(0, 3); // Ambil 3 terbaik untuk Dashboard
+
   return (
     <div className="trading-terminal">
-      {/* ELEMEN CUSTOM TOAST (Pengganti Alert) */}
+      {/* ELEMEN CUSTOM TOAST */}
       <div className={`toast-notification ${toast.show ? 'show' : ''} ${toast.type}`}>
         <span className="toast-icon">
           {toast.type === 'success' ? '✅' : toast.type === 'error' ? '❌' : 'ℹ️'}
@@ -282,38 +312,10 @@ export default function Page() {
         </div>
       </header>
 
-      <div className={`btc-regime-card ${data.btc.bias.toLowerCase()}`}>
-        <div className="btc-info-row">
-          <div>
-            <h3>BITCOIN TREN DIKONTROL UTAMA (MARKET REGIME)</h3>
-            <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
-          </div>
-          <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
-            {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
-          </span>
-        </div>
-        <div className="btc-news-body">
-          <p><b>Rangkuman:</b> {data.btc.news}</p>
-        </div>
-        
-        {data.btc.newsList && data.btc.newsList.length > 0 && (
-          <div className="btc-news-stream">
-            <h4>📰 Live News & Analisis Jaringan</h4>
-            <ul className="news-list-items">
-              {data.btc.newsList.map((n: any, idx: number) => (
-                <li key={idx}>
-                  <span className="news-time">[{n.time}]</span> 
-                  <span className={`news-impact-tag ${n.impact.toLowerCase()}`}>{n.impact}</span>
-                  <span className="news-title">{n.title}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </div>
-
+      {/* PENGALIHAN NAVIGASI & FILTER */}
       <div className="control-bar">
         <nav className="tab-nav">
+          <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
           <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Scanner ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Radar Pantau ({data.watchlist.length})</button>
           <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Buku Portofolio ({portfolio.length})</button>
@@ -328,6 +330,106 @@ export default function Page() {
         )}
       </div>
 
+      {/* VIEW PANEL 0: PUSAT INTELIJEN (DASHBOARD) */}
+      {activeTab === "dashboard" && (
+        <section className="view-section dashboard-grid">
+          {/* KOLOM KIRI: Kesehatan & BTC */}
+          <div className="dash-col-left">
+            <div className="market-health-card">
+              <h3>📊 Rasio Kesehatan Altcoin Saat Ini</h3>
+              <div className="health-status-text">{data.stats.health}</div>
+              <div className="health-bar-container">
+                <div className="bull-bar" style={{ width: \`\${data.stats.bullPct}%\` }}>{data.stats.bullPct}% Bulls</div>
+                <div className="bear-bar" style={{ width: \`\${data.stats.bearPct}%\` }}>{data.stats.bearPct}% Bears</div>
+              </div>
+              <p className="health-hint">Indikator ini mengukur sentimen keseluruhan pasar berdasarkan perubahan harga dalam 24 jam terakhir.</p>
+            </div>
+
+            <div className={`btc-regime-card ${data.btc.bias.toLowerCase()} dash-btc`}>
+              <div className="btc-info-row">
+                <div>
+                  <h3>ARAH UTAMA BITCOIN</h3>
+                  <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
+                </div>
+                <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
+                  {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
+                </span>
+              </div>
+              <div className="btc-news-body">
+                <p><b>Analisis Makro:</b> {data.btc.news}</p>
+              </div>
+            </div>
+
+            {urgentPositions.length > 0 ? (
+              <div className="alert-summary-board">
+                <h3>🚨 Radar Posisi Darurat (Open Position)</h3>
+                <p>Koin portofolio Anda yang membutuhkan perhatian khusus karena anomali indikator atau mendekati batas TP/SL.</p>
+                <div className="alert-cards-container column-layout">
+                  {urgentPositions.map((item: any) => (
+                    <div key={`alert-${item.id}`} className={`alert-card ${item.alertType.toLowerCase()}`}>
+                      <div className="alert-header">
+                        <strong>{item.pair.replace("_", "/").toUpperCase()}</strong>
+                        <span className="alert-badge">{item.alertType.toUpperCase()}</span>
+                      </div>
+                      <p className="alert-desc-text">{item.alertReason}</p>
+                      {item.alertProgress > 0 && (
+                        <div className="mini-progress-bg mt-2">
+                          <div className="mini-progress-fill" style={{ width: \`\${item.alertProgress}%\` }}></div>
+                        </div>
+                      )}
+                      <button className="dash-quick-sell-btn" onClick={() => handleSell(item.id, item.pair)} disabled={loadingAction === `sell_${item.id}`}>
+                        {loadingAction === `sell_${item.id}` ? "Menutup Posisi..." : "Tutup Posisi Sekarang"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="market-health-card calm-state">
+                <h3>✅ Portofolio Aman</h3>
+                <p>Tidak ada koin di dalam portofolio Anda yang menunjukkan anomali atau mendekati bahaya SL/TP saat ini.</p>
+              </div>
+            )}
+          </div>
+
+          {/* KOLOM KANAN: Top 3 Rekomendasi */}
+          <div className="dash-col-right">
+            <div className="top-nominations-board">
+              <h3>🏆 Top 3 Nominasi Pembelian Terbaik</h3>
+              <p>Disortir berdasarkan Skor Keyakinan (Confidence Score) tertinggi oleh algoritma sentimen dan momentum saat ini.</p>
+              
+              <div className="top-coins-list">
+                {topNominations.map((c: any, index: number) => (
+                  <div key={`top-${c.pair}`} className="top-coin-item">
+                    <div className="top-rank-badge">#{index + 1}</div>
+                    <div className="top-coin-details">
+                      <div className="top-header">
+                        <h4>{c.pair.replace("_", "/").toUpperCase()}</h4>
+                        <span className={`signal-label ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.signal}</span>
+                      </div>
+                      <div className="top-price-row">
+                        <span className="current-price-num">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</span>
+                        <span className={`price-pct-change ${c.change >= 0 ? 'plus' : 'minus'}`}>
+                          {c.change >= 0 ? '↗' : '↘'} {c.change?.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="top-info-desc">
+                        <p>Daya Beli: <b>{c.technicals.buying_pressure}%</b> | RRR: <b>1 : {c.rrr}</b></p>
+                        <p className="text-dim">"{c.news_headline}"</p>
+                      </div>
+                      <button className="execute-buy-button small-btn" onClick={() => openBuyModal(c)} disabled={c.signal === "SELL"}>
+                        {c.signal === "SELL" ? "Dilarang Beli" : "⚡ Buka Posisi Ini"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* VIEW PANEL 1: SCANNER */}
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
@@ -379,7 +481,7 @@ export default function Page() {
                       <span>{c.technicals.buying_pressure}%</span>
                     </div>
                     <div className="pressure-bar-bg">
-                      <div className="pressure-bar-fill" style={{ width: `${c.technicals.buying_pressure}%` }}></div>
+                      <div className="pressure-bar-fill" style={{ width: \`\${c.technicals.buying_pressure}%\` }}></div>
                     </div>
                   </div>
 
@@ -398,6 +500,7 @@ export default function Page() {
         </section>
       )}
 
+      {/* VIEW PANEL 2: WATCHLIST */}
       {activeTab === "watchlist" && (
         <section className="view-section">
           {data.watchlist.length === 0 ? (
@@ -445,9 +548,9 @@ export default function Page() {
         </section>
       )}
 
+      {/* VIEW PANEL 3: PORTFOLIO */}
       {activeTab === "portfolio" && (
         <section className="view-section">
-          {/* DASHBOARD PNL GLOBAL */}
           <div className="portfolio-global-dashboard">
             <div className="dashboard-metric-box">
               <span className="metric-title">Total Modal Diinvestasikan</span>
@@ -460,30 +563,6 @@ export default function Page() {
               </strong>
             </div>
           </div>
-
-          {/* NEW: RANGKUMAN PERINGATAN TP/SL */}
-          {approachingTargets.length > 0 && (
-            <div className="alert-summary-board">
-              <h3>🚨 Rangkuman Peringatan Posisi</h3>
-              <p>Koin berikut sudah melampaui 75% jarak pergerakan menuju batas otomatis yang Anda buat.</p>
-              <div className="alert-cards-container">
-                {approachingTargets.map((item: any) => (
-                  <div key={`alert-${item.id}`} className={`alert-card ${item.type.toLowerCase()}`}>
-                    <div className="alert-header">
-                      <strong>{item.pair.replace("_", "/").toUpperCase()}</strong>
-                      <span className="alert-badge">{item.type === 'TP' ? '🎯 Mendekati TP' : '⚠️ Ancaman SL'}</span>
-                    </div>
-                    <div className="alert-progress">
-                      <span>Progres ke Target: {item.progress.toFixed(1)}%</span>
-                      <div className="mini-progress-bg">
-                        <div className="mini-progress-fill" style={{ width: `${item.progress}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
           {portfolio.length === 0 ? (
             <div className="empty-placeholder">Buku portofolio Anda kosong. Silakan masuk ke pasar.</div>
@@ -657,6 +736,7 @@ export default function Page() {
         .narrative-text { font-size: 12px; font-style: italic; color: #cbd5e1; line-height: 1.4; }
 
         .execute-buy-button { width: 100%; background: var(--theme-blue); border: none; color: white; padding: 12px; border-radius: 8px; font-weight: 700; font-size: 13px; cursor: pointer; margin-top: 15px; transition: 0.2s; }
+        .execute-buy-button.small-btn { padding: 8px; font-size: 12px; margin-top: 10px; }
         .execute-buy-button:hover:not(:disabled) { background: #2563eb; }
         .execute-buy-button:disabled { background: #1e293b; color: #4b5563; cursor: not-allowed; }
 
@@ -684,32 +764,67 @@ export default function Page() {
         .info-bullet-list li { position: relative; padding-left: 18px; font-size: 13px; color: #cbd5e1; line-height: 1.5; }
         .info-bullet-list li::before { content: "•"; position: absolute; left: 0; top: 0; color: var(--theme-blue); font-size: 18px; line-height: 1; }
         .info-bullet-list li b { color: white; }
-
         .watch-buy { max-width: 350px; margin-top: 20px; }
+
+        /* CSS DASHBOARD (PUSAT INTELIJEN) */
+        .dashboard-grid { display: flex; gap: 25px; flex-wrap: wrap; }
+        .dash-col-left { flex: 2; min-width: 300px; display: flex; flex-direction: column; gap: 20px; }
+        .dash-col-right { flex: 1; min-width: 300px; }
+
+        .market-health-card { background: var(--bg-card); border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; }
+        .market-health-card h3 { font-size: 14px; color: var(--theme-blue); margin-bottom: 12px; }
+        .health-status-text { font-size: 20px; font-weight: 800; color: white; margin-bottom: 15px; }
+        .health-bar-container { display: flex; width: 100%; height: 24px; border-radius: 6px; overflow: hidden; font-size: 11px; font-weight: 700; text-align: center; line-height: 24px; color: white; }
+        .bull-bar { background: var(--theme-green); transition: width 0.5s ease-in-out; }
+        .bear-bar { background: var(--theme-red); transition: width 0.5s ease-in-out; }
+        .health-hint { font-size: 12px; color: var(--text-dim); margin-top: 12px; font-style: italic; }
+        .calm-state { text-align: center; padding: 40px 20px; }
+        .calm-state h3 { font-size: 18px; color: var(--theme-green); }
+
+        .dash-btc { margin-bottom: 0; }
+
+        .top-nominations-board { background: var(--bg-card); border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; height: 100%; }
+        .top-nominations-board h3 { font-size: 15px; color: #facc15; margin-bottom: 5px; }
+        .top-nominations-board p { font-size: 12px; color: var(--text-dim); margin-bottom: 20px; }
+        .top-coins-list { display: flex; flex-direction: column; gap: 15px; }
+        .top-coin-item { display: flex; gap: 15px; background: var(--bg-inner-box); padding: 15px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); }
+        .top-rank-badge { font-size: 24px; font-weight: 900; color: #334155; }
+        .top-coin-details { flex: 1; }
+        .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .top-header h4 { font-size: 16px; font-weight: 800; }
+        .top-price-row { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+        .top-info-desc { font-size: 11px; color: #cbd5e1; line-height: 1.5; }
+        .text-dim { color: var(--text-dim); font-style: italic; margin-top: 4px; }
+
+        .alert-summary-board { background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.15); padding: 20px; border-radius: 12px; }
+        .alert-summary-board h3 { font-size: 16px; font-weight: 800; color: #facc15; margin-bottom: 6px; }
+        .alert-summary-board p { font-size: 13px; color: var(--text-dim); margin-bottom: 18px; }
+        .alert-cards-container.column-layout { flex-direction: column; }
+        .alert-card { padding: 18px; border-radius: 10px; background: var(--bg-inner-box); border: 1px solid var(--border-color); }
+        .alert-card.success { border-left: 4px solid var(--theme-green); }
+        .alert-card.danger { border-left: 4px solid var(--theme-red); }
+        .alert-card.critical { border-left: 4px solid #f59e0b; background: rgba(245,158,11,0.05); }
+        .alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .alert-header strong { font-size: 16px; }
+        .alert-badge { font-size: 10px; font-weight: 800; padding: 4px 8px; border-radius: 4px; }
+        .alert-card.success .alert-badge { background: rgba(16,185,129,0.2); color: var(--theme-green); }
+        .alert-card.danger .alert-badge { background: rgba(239,68,68,0.2); color: var(--theme-red); }
+        .alert-card.critical .alert-badge { background: rgba(245,158,11,0.2); color: #fcd34d; }
+        .alert-desc-text { font-size: 13px; color: #cbd5e1; font-weight: 600; }
+        
+        .dash-quick-sell-btn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; font-size: 12px; font-weight: 600; margin-top: 15px; cursor: pointer; transition: 0.2s; }
+        .dash-quick-sell-btn:hover { background: var(--theme-red); }
 
         .portfolio-global-dashboard { display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap; }
         .dashboard-metric-box { flex: 1; min-width: 250px; background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
         .dashboard-metric-box.highlight { background: rgba(16,185,129,0.05); border-color: rgba(16,185,129,0.2); }
         .metric-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
         .metric-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
-
-        /* CSS BARU UNTUK RANGKUMAN TP / SL */
-        .alert-summary-board { background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.15); padding: 20px; border-radius: 12px; margin-bottom: 25px; }
-        .alert-summary-board h3 { font-size: 16px; font-weight: 800; color: #facc15; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
-        .alert-summary-board p { font-size: 13px; color: var(--text-dim); margin-bottom: 18px; }
-        .alert-cards-container { display: flex; gap: 15px; flex-wrap: wrap; }
-        .alert-card { flex: 1; min-width: 250px; padding: 18px; border-radius: 10px; background: var(--bg-inner-box); border: 1px solid var(--border-color); }
-        .alert-card.tp { border-top: 3px solid var(--theme-green); box-shadow: 0 -4px 15px rgba(16,185,129,0.08); }
-        .alert-card.sl { border-top: 3px solid var(--theme-red); box-shadow: 0 -4px 15px rgba(239,68,68,0.08); }
-        .alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
-        .alert-header strong { font-size: 16px; }
-        .alert-badge { font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 12px; }
-        .alert-card.tp .alert-badge { background: rgba(16,185,129,0.2); color: var(--theme-green); }
-        .alert-card.sl .alert-badge { background: rgba(239,68,68,0.2); color: var(--theme-red); }
-        .alert-progress { font-size: 12px; color: var(--text-dim); font-weight: 600; }
-        .mini-progress-bg { width: 100%; height: 6px; background: #0f172a; border-radius: 4px; margin-top: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
-        .alert-card.tp .mini-progress-fill { height: 100%; background: var(--theme-green); transition: width 0.3s ease-in-out; }
-        .alert-card.sl .mini-progress-fill { height: 100%; background: var(--theme-red); transition: width 0.3s ease-in-out; }
+        
+        .mini-progress-bg { width: 100%; height: 6px; background: #0f172a; border-radius: 4px; overflow: hidden; }
+        .mt-2 { margin-top: 10px; }
+        .alert-card.success .mini-progress-fill { height: 100%; background: var(--theme-green); }
+        .alert-card.danger .mini-progress-fill { height: 100%; background: var(--theme-red); }
 
         .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
         .portfolio-row-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
