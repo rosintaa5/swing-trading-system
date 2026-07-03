@@ -8,11 +8,11 @@ const API = rawAPI.endsWith('/') ? rawAPI.slice(0, -1) : rawAPI;
 
 export default function Page() {
   const [data, setData] = useState<{ 
-    btc: { price: number; change: number; bias: string; news: string }; 
+    btc: { price: number; change: number; bias: string; news: string; newsList: any[] }; 
     top: any[]; 
     watchlist: any[] 
   }>({ 
-    btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data..." }, 
+    btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data...", newsList: [] }, 
     top: [], 
     watchlist: [] 
   });
@@ -31,11 +31,17 @@ export default function Page() {
   };
 
   // --- STATE BUY MODAL FORM ---
-  const [buyModal, setBuyModal] = useState<{ isOpen: boolean, coin: any, customEntry: string, capital: string }>({
+  const [buyModal, setBuyModal] = useState<{ 
+    isOpen: boolean, coin: any, 
+    customEntryRaw: string, customEntryDisplay: string, 
+    capitalRaw: string, capitalDisplay: string 
+  }>({
     isOpen: false,
     coin: null,
-    customEntry: "",
-    capital: "10000000" // Modal dasar default 10jt IDR
+    customEntryRaw: "",
+    customEntryDisplay: "",
+    capitalRaw: "10000000",
+    capitalDisplay: "10.000.000"
   });
 
   useEffect(() => {
@@ -64,25 +70,48 @@ export default function Page() {
     }
   }, []);
 
+  // Format Helper: Menyulap angka menjadi Rupiah untuk tampilan
+  const formatRupiah = (val: string) => {
+    const rawNum = val.replace(/[^0-9]/g, '');
+    return rawNum ? parseInt(rawNum).toLocaleString('id-ID') : '';
+  };
+
+  // Format Helper: Untuk Harga Koin Desimal (Tidak memaksa buang koma/titik desimal)
+  const formatDecimal = (val: string) => {
+    return val.replace(/[^0-9.]/g, ''); 
+  };
+
+  const handleCapitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value.replace(/[^0-9]/g, '');
+    setBuyModal(prev => ({ ...prev, capitalRaw: rawVal, capitalDisplay: formatRupiah(rawVal) }));
+  };
+
+  const handleEntryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const safeDec = formatDecimal(e.target.value);
+    setBuyModal(prev => ({ ...prev, customEntryRaw: safeDec, customEntryDisplay: safeDec }));
+  };
+
   // Membuka Popup Modal Form Entry
   const openBuyModal = (coin: any) => {
     setBuyModal({
       isOpen: true,
       coin: coin,
-      customEntry: coin.price.toString(),
-      capital: "10000000"
+      customEntryRaw: coin.price.toString(),
+      customEntryDisplay: coin.price.toString(),
+      capitalRaw: "10000000",
+      capitalDisplay: "10.000.000"
     });
   };
 
   const closeBuyModal = () => {
-    setBuyModal({ isOpen: false, coin: null, customEntry: "", capital: "100000" });
+    setBuyModal({ isOpen: false, coin: null, customEntryRaw: "", customEntryDisplay: "", capitalRaw: "100000", capitalDisplay: "100.000" });
   };
 
-  // Eksekusi Submit dari dalam Modal
+  // Eksekusi Submit dari dalam Modal ke Backend
   const submitBuy = async () => {
-    const { coin, customEntry, capital } = buyModal;
-    const numEntry = parseFloat(customEntry);
-    const numCapital = parseFloat(capital);
+    const { coin, customEntryRaw, capitalRaw } = buyModal;
+    const numEntry = parseFloat(customEntryRaw);
+    const numCapital = parseFloat(capitalRaw);
 
     if (!numEntry || !numCapital || numEntry <= 0 || numCapital <= 0) {
       showToast("Gagal: Harga Entry dan Modal IDR harus berupa angka valid!", "error");
@@ -90,9 +119,10 @@ export default function Page() {
     }
 
     setLoadingAction(`buy_${coin.pair}`);
-    closeBuyModal(); // Tutup modal saat memproses
+    closeBuyModal(); 
     
     try {
+      // Mengirimkan High dan Low koin agar backend dapat menghitung ATR murni yang presisi
       const res = await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -100,7 +130,8 @@ export default function Page() {
           pair: coin.pair,
           entry_price: numEntry,
           capital: numCapital,
-          volatility: coin.technicals.volatility,
+          high: coin.high,
+          low: coin.low,
           news_headline: coin.news_headline,
           news_impact: coin.news_impact
         })
@@ -154,6 +185,10 @@ export default function Page() {
     }
   };
 
+  // Kalkulasi Rekap PnL Total Portofolio
+  const totalModalActive = portfolio.reduce((sum, item) => sum + (item.initial_capital || 0), 0);
+  const totalPnLActive = portfolio.reduce((sum, item) => sum + (item.pnl || 0), 0);
+
   const displayedCoins = signalFilter === "ALL" 
     ? data.top 
     : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
@@ -180,30 +215,33 @@ export default function Page() {
             <div className="modal-body">
               <div className="input-group">
                 <label>Nominal Investasi / Modal (IDR)</label>
-                <input 
-                  type="number" 
-                  value={buyModal.capital} 
-                  onChange={(e) => setBuyModal({...buyModal, capital: e.target.value})}
-                  placeholder="Misal: 10000000"
-                />
+                <div className="input-with-prefix">
+                  <span>Rp</span>
+                  <input 
+                    type="text" 
+                    value={buyModal.capitalDisplay} 
+                    onChange={handleCapitalChange}
+                    placeholder="10.000.000"
+                  />
+                </div>
               </div>
 
               <div className="input-group">
                 <label>Harga Beli (Entry Target)</label>
                 <input 
-                  type="number" 
-                  value={buyModal.customEntry} 
-                  onChange={(e) => setBuyModal({...buyModal, customEntry: e.target.value})}
+                  type="text" 
+                  value={buyModal.customEntryDisplay} 
+                  onChange={handleEntryChange}
                   placeholder={`Harga Pasar: ${buyModal.coin.price}`}
                 />
-                <span className="input-hint">Default terisi harga pasar. Anda bisa mengubahnya untuk order limit.</span>
+                <span className="input-hint">Mendukung angka desimal. Default terisi harga pasar saat ini.</span>
               </div>
 
               <div className="modal-info-panel">
-                <h4>Simulasi Metrik Berdasarkan Harga Entry Anda:</h4>
+                <h4>Simulasi Kalkulasi Keamanan (ATR Berdasarkan Entry Anda):</h4>
                 <ul>
-                  <li>Estimasi Target Profit: <strong className="text-green">+ {(parseFloat(buyModal.customEntry) * (1 + (Math.min(parseFloat(buyModal.coin.technicals.volatility), 12) * 1.6) / 100)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></li>
-                  <li>Batas Stop Loss: <strong className="text-red">- {(parseFloat(buyModal.customEntry) * (1 - (Math.min(parseFloat(buyModal.coin.technicals.volatility), 12) * 1.0) / 100)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></li>
+                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 1.5)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 1.0)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
                 </ul>
               </div>
             </div>
@@ -227,20 +265,36 @@ export default function Page() {
         </div>
       </header>
 
-      {/* PANEL UTAMA: SENTIMEN BITCOIN */}
+      {/* PANEL UTAMA: SENTIMEN BITCOIN & NEWS FEED */}
       <div className={`btc-regime-card ${data.btc.bias.toLowerCase()}`}>
         <div className="btc-info-row">
           <div>
             <h3>BITCOIN TREN DIKONTROL UTAMA (MARKET REGIME)</h3>
-            <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString()} IDR` : 'Memuat data...'}</span>
+            <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
           </div>
           <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
             {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
           </span>
         </div>
         <div className="btc-news-body">
-          <p>{data.btc.news}</p>
+          <p><b>Rangkuman:</b> {data.btc.news}</p>
         </div>
+        
+        {/* NEW SECTION: LATEST NEWS STREAM */}
+        {data.btc.newsList && data.btc.newsList.length > 0 && (
+          <div className="btc-news-stream">
+            <h4>📰 Live News & Analisis Jaringan</h4>
+            <ul className="news-list-items">
+              {data.btc.newsList.map((n: any, idx: number) => (
+                <li key={idx}>
+                  <span className="news-time">[{n.time}]</span> 
+                  <span className={`news-impact-tag ${n.impact.toLowerCase()}`}>{n.impact}</span>
+                  <span className="news-title">{n.title}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
 
       {/* NAVIGASI & FILTER */}
@@ -264,7 +318,7 @@ export default function Page() {
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
-            <div className="loading-container-box">Sedang memindai dan menghitung pergerakan koin terbaik untuk Anda...</div>
+            <div className="loading-container-box">Sedang memindai dan menghitung pergerakan koin terbaik menggunakan ATR...</div>
           ) : (
             <div className="cards-responsive-grid">
               {displayedCoins.map((c: any) => (
@@ -280,7 +334,7 @@ export default function Page() {
                   </div>
 
                   <div className="price-display-block">
-                    <span className="current-price-num">{c.price.toLocaleString()} IDR</span>
+                    <span className="current-price-num">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })} IDR</span>
                     <span className={`price-pct-change ${c.change >= 0 ? 'plus' : 'minus'}`}>
                       {c.change >= 0 ? '↗' : '↘'} {c.change?.toFixed(2)}%
                     </span>
@@ -288,16 +342,16 @@ export default function Page() {
 
                   <div className="matrix-target-box">
                     <div className="matrix-cell">
-                      <span className="cell-title">🛡️ BATAS SL</span>
-                      <strong className="text-red">{c.target_sl.toLocaleString()}</strong>
+                      <span className="cell-title">🛡️ BATAS SL (ATR)</span>
+                      <strong className="text-red">{c.target_sl.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                     <div className="matrix-cell border-sides">
-                      <span className="cell-title">🔑 CURRENT PRICE</span>
-                      <strong className="text-white">{c.price.toLocaleString()}</strong>
+                      <span className="cell-title">🔑 ENTRY TERBAIK</span>
+                      <strong className="text-white">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                     <div className="matrix-cell">
-                      <span className="cell-title">🎯 TARGET TP</span>
-                      <strong className="text-green">{c.target_tp.toLocaleString()}</strong>
+                      <span className="cell-title">🎯 TARGET TP (ATR)</span>
+                      <strong className="text-green">{c.target_tp.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                   </div>
 
@@ -321,7 +375,6 @@ export default function Page() {
                     <p className="narrative-text">"{c.news_headline}"</p>
                   </div>
 
-                  {/* Tombol memanggil Modal Beli */}
                   <button className="execute-buy-button" onClick={() => openBuyModal(c)} disabled={c.signal === "SELL"}>
                     {c.signal === "SELL" ? "🚨 Dilarang Beli (Risiko Tinggi)" : "⚡ Atur & Buka Posisi"}
                   </button>
@@ -332,7 +385,7 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 2: WATCHLIST (DI-UPGRADE MENJADI DETAIL) */}
+      {/* VIEW PANEL 2: WATCHLIST */}
       {activeTab === "watchlist" && (
         <section className="view-section">
           {data.watchlist.length === 0 ? (
@@ -350,28 +403,28 @@ export default function Page() {
                   </div>
 
                   <div className="watch-price-row">
-                    <span className="watch-price">{c.price.toLocaleString()} IDR</span>
+                    <span className="watch-price">{c.price.toLocaleString('id-ID')} IDR</span>
                     <span className={`price-pct-change ${c.change >= 0 ? 'plus' : 'minus'}`}>
                       {c.change >= 0 ? '↗' : '↘'} {c.change?.toFixed(2)}%
                     </span>
                   </div>
 
-                  {/* Papan Informasi Deskriptif */}
                   <div className="watch-info-board">
                     <div className="info-status-bar">
                       <span className="info-label">Status Algoritma:</span>
                       <strong className={`status-highlight ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.watch_status}</strong>
                     </div>
                     <ul className="info-bullet-list">
-                      <li><b>Kondisi Pasar:</b> {c.watch_desc}</li>
-                      <li><b>Tekanan Beli (Minat Investor):</b> Menguasai {c.technicals.buying_pressure}% transaksi terbaru.</li>
-                      <li><b>Volatilitas Risiko:</b> Koin ini memiliki pergerakan harga rata-rata {c.technicals.volatility}% harian.</li>
-                      <li><b>Saran Modal Jaga-jaga:</b> {c.capital_advice}</li>
+                      <li><b>Analisis Mesin:</b> {c.news_headline}</li>
+                      <li><b>Kondisi Makro:</b> {c.watch_desc}</li>
+                      <li><b>Tekanan Beli:</b> Menguasai {c.technicals.buying_pressure}% transaksi.</li>
+                      <li><b>Volatilitas Risiko:</b> Koin ini memiliki pergerakan harga rata-rata {c.technicals.volatility}% harian (Tinggi/Rendah).</li>
+                      <li><b>Saran Manajemen Dana:</b> {c.capital_advice}</li>
                     </ul>
                   </div>
 
                   <button className="execute-buy-button watch-buy" onClick={() => openBuyModal(c)}>
-                    ⚡ Buat Form Order Pembelian Koin Ini
+                    ⚡ Setup Order Pembelian Koin Ini
                   </button>
                 </div>
               ))}
@@ -380,9 +433,23 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 3: PORTFOLIO */}
+      {/* VIEW PANEL 3: PORTFOLIO & DASHBOARD PNL */}
       {activeTab === "portfolio" && (
         <section className="view-section">
+          {/* DASHBOARD PNL GLOBAL */}
+          <div className="portfolio-global-dashboard">
+            <div className="dashboard-metric-box">
+              <span className="metric-title">Total Modal Diinvestasikan</span>
+              <strong className="metric-value text-white">Rp {totalModalActive.toLocaleString('id-ID')}</strong>
+            </div>
+            <div className="dashboard-metric-box highlight">
+              <span className="metric-title">Total Keuntungan / Kerugian (PnL)</span>
+              <strong className={`metric-value ${totalPnLActive >= 0 ? 'text-green' : 'text-red'}`}>
+                {totalPnLActive >= 0 ? '+' : ''}Rp {totalPnLActive.toLocaleString('id-ID', { maximumFractionDigits: 1 })}
+              </strong>
+            </div>
+          </div>
+
           {portfolio.length === 0 ? (
             <div className="empty-placeholder">Buku portofolio Anda kosong. Silakan masuk ke pasar.</div>
           ) : (
@@ -392,19 +459,19 @@ export default function Page() {
                   <div className="port-left-section">
                     <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
                     <span className="time-subtext">Terbuka: {new Date(p.created_at).toLocaleString('id-ID')}</span>
-                    <span className="modal-info-subtext">Modal: Rp {p.initial_capital?.toLocaleString() || "100.000"}</span>
+                    <span className="modal-info-subtext">Modal Masuk: Rp {p.initial_capital?.toLocaleString('id-ID') || "0"}</span>
                   </div>
 
                   <div className="prices-summary-grid">
-                    <div><span>Harga Beli (Entry)</span><b>{p.entry_price?.toLocaleString()}</b></div>
-                    <div><span>Batas SL (Otomatis)</span><b className="text-red">{p.target_sl?.toLocaleString()}</b></div>
-                    <div><span>Sasaran TP (Otomatis)</span><b className="text-green">{p.target_tp?.toLocaleString()}</b></div>
+                    <div><span>Harga Beli (Entry)</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Batas SL (ATR)</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Sasaran TP (ATR)</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                   </div>
 
                   <div className="pnl-showcase">
                     <span>Keuntungan Berjalan (PnL)</span>
                     <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
-                      {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString(undefined, { maximumFractionDigits: 1 })} IDR
+                      {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString('id-ID', { maximumFractionDigits: 1 })} IDR
                     </strong>
                   </div>
 
@@ -418,7 +485,7 @@ export default function Page() {
         </section>
       )}
 
-      {/* STYLESHEET EMBEDDED */}
+      {/* STYLESHEET EMBEDDED DENGAN PENAMBAHAN */}
       <style dangerouslySetInnerHTML={{ __html: `
         :root {
           --bg-dark-base: #060913; --bg-card: #0d1323; --bg-inner-box: #131b30;
@@ -441,7 +508,6 @@ export default function Page() {
         .status-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-red); }
         .status-badge.active .dot { background: var(--theme-green); box-shadow: 0 0 8px var(--theme-green); }
 
-        /* TOAST NOTIFICATION */
         .toast-notification { position: fixed; top: 30px; right: 30px; background: var(--bg-card); border-left: 4px solid var(--theme-blue); box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 16px 20px; border-radius: 8px; display: flex; align-items: center; gap: 12px; z-index: 9999; transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); opacity: 0; }
         .toast-notification.show { transform: translateX(0); opacity: 1; }
         .toast-notification.success { border-left-color: var(--theme-green); }
@@ -449,7 +515,6 @@ export default function Page() {
         .toast-notification p { font-size: 14px; font-weight: 600; color: white; margin: 0; }
         .toast-icon { font-size: 18px; }
 
-        /* BUY MODAL POPUP */
         .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 9000; animation: fadeIn 0.2s; }
         .modal-box { background: var(--bg-card); width: 100%; max-width: 450px; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 20px 50px rgba(0,0,0,0.5); overflow: hidden; }
         .modal-header { padding: 18px 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #0f172a; }
@@ -460,8 +525,11 @@ export default function Page() {
         .modal-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
         .input-group { display: flex; flex-direction: column; gap: 8px; }
         .input-group label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
-        .input-group input { background: var(--bg-inner-box); border: 1px solid var(--border-color); color: white; padding: 12px 14px; border-radius: 6px; font-size: 15px; font-weight: 600; outline: none; transition: 0.2s; }
+        .input-group input { background: var(--bg-inner-box); border: 1px solid var(--border-color); color: white; padding: 12px 14px; border-radius: 6px; font-size: 15px; font-weight: 600; outline: none; transition: 0.2s; width: 100%; }
         .input-group input:focus { border-color: var(--theme-blue); box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+        .input-with-prefix { position: relative; display: flex; align-items: center; }
+        .input-with-prefix span { position: absolute; left: 14px; color: var(--text-dim); font-size: 14px; font-weight: 600; }
+        .input-with-prefix input { padding-left: 40px; }
         .input-hint { font-size: 11px; color: var(--text-dim); font-style: italic; }
 
         .modal-info-panel { background: rgba(30,41,59,0.5); padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
@@ -475,7 +543,6 @@ export default function Page() {
         .btn-confirm-buy { background: var(--theme-blue); border: none; color: white; padding: 10px 20px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 10px rgba(37,99,235,0.2); }
         .btn-confirm-buy:hover { background: #2563eb; transform: translateY(-1px); }
 
-        /* SENTIMEN BITCOIN */
         .btc-regime-card { background: var(--bg-card); border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; margin-bottom: 25px; border-left: 5px solid #475569; }
         .btc-regime-card.bullish { border-left-color: var(--theme-green); box-shadow: 0 0 15px rgba(16,185,129,0.08); }
         .btc-regime-card.bearish { border-left-color: var(--theme-red); box-shadow: 0 0 15px rgba(239,68,68,0.08); }
@@ -486,8 +553,18 @@ export default function Page() {
         .btc-change-badge.bull { background: rgba(16,185,129,0.15); color: var(--theme-green); }
         .btc-change-badge.bear { background: rgba(239,68,68,0.15); color: var(--theme-red); }
         .btc-news-body { background: rgba(0,0,0,0.2); padding: 12px; border-radius: 6px; font-size: 13.5px; line-height: 1.5; color: #cbd5e1; }
+        
+        .btc-news-stream { margin-top: 15px; border-top: 1px dashed rgba(255,255,255,0.1); padding-top: 15px; }
+        .btc-news-stream h4 { font-size: 12px; color: var(--theme-blue); margin-bottom: 10px; letter-spacing: 0.5px; }
+        .news-list-items { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+        .news-list-items li { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; line-height: 1.4; color: #94a3b8; }
+        .news-time { font-size: 11px; opacity: 0.7; font-family: monospace; }
+        .news-impact-tag { font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; }
+        .news-impact-tag.bullish { background: rgba(16,185,129,0.1); color: var(--theme-green); }
+        .news-impact-tag.bearish { background: rgba(239,68,68,0.1); color: var(--theme-red); }
+        .news-impact-tag.neutral { background: rgba(255,255,255,0.05); color: #94a3b8; }
+        .news-title { color: #cbd5e1; }
 
-        /* CONTROLS BAR */
         .control-bar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; margin-bottom: 25px; }
         .tab-nav { display: flex; gap: 8px; }
         .nav-link { background: none; border: none; color: var(--text-dim); padding: 8px 16px; font-size: 14px; font-weight: 600; cursor: pointer; border-radius: 6px; transition: 0.2s; }
@@ -499,7 +576,6 @@ export default function Page() {
         .filter-btn { background: #151f32; border: 1px solid var(--border-color); color: var(--text-dim); padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 4px; cursor: pointer; }
         .filter-btn.active { background: rgba(59,130,246,0.15); border-color: var(--theme-blue); color: #fff; }
 
-        /* SCANNER GRIDS */
         .cards-responsive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
         .coin-card-wrapper { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; transition: 0.2s; }
         .coin-card-wrapper:hover { border-color: var(--theme-blue); transform: translateY(-2px); }
@@ -549,7 +625,6 @@ export default function Page() {
         .execute-buy-button:hover:not(:disabled) { background: #2563eb; }
         .execute-buy-button:disabled { background: #1e293b; color: #4b5563; cursor: not-allowed; }
 
-        /* WATCHLIST DETAILED VIEW */
         .watchlist-list-view { display: flex; flex-direction: column; gap: 15px; }
         .watchlist-detailed-card { background: var(--bg-card); border-left: 4px solid var(--theme-purple); border-radius: 12px; padding: 20px; border-top: 1px solid var(--border-color); border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
         .watch-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
@@ -577,7 +652,12 @@ export default function Page() {
 
         .watch-buy { max-width: 350px; margin-top: 20px; }
 
-        /* PORTFOLIO LISTS */
+        .portfolio-global-dashboard { display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap; }
+        .dashboard-metric-box { flex: 1; min-width: 250px; background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
+        .dashboard-metric-box.highlight { background: rgba(16,185,129,0.05); border-color: rgba(16,185,129,0.2); }
+        .metric-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+        .metric-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
+
         .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
         .portfolio-row-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
         .port-left-section h3 { font-size: 18px; font-weight: 800; color: white; }
