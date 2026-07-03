@@ -8,7 +8,7 @@ require("dotenv").config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const FRONTEND_URL = "https://crypto-sintaa.vercel.app";
+const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // Middleware & Security CORS
 app.use(cors({
@@ -38,10 +38,9 @@ const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('Koneksi Database bermasalah secara tidak terduga:', err);
+  console.error('⚠️ Koneksi Database bermasalah secara tidak terduga:', err);
 });
 
-// Inisialisasi Database (Portofolio + Watchlist)
 async function initDB() {
   try {
     await pool.query(`
@@ -77,6 +76,14 @@ initDB();
 const BASE = "https://indodax.com/api";
 let cache = { tickers: {}, lastUpdate: 0, isFetching: false };
 
+// --- GLOBAL MARKET INTELLIGENCE (BTC TRACKER) ---
+let btcTrend = {
+  price: 0,
+  change: 0,
+  bias: "NEUTRAL",
+  news: "Menunggu aliran data Bitcoin..."
+};
+
 async function updateMarket() {
   const now = Date.now();
   if (now - cache.lastUpdate < 8000 || cache.isFetching) return;
@@ -87,16 +94,34 @@ async function updateMarket() {
     if (res.data && res.data.tickers) {
       cache.tickers = res.data.tickers;
       cache.lastUpdate = Date.now();
+
+      // Analisis Arah Angin Bitcoin (Market Bias)
+      const btc = cache.tickers["btc_idr"];
+      if (btc) {
+        btcTrend.price = parseFloat(btc.last);
+        btcTrend.change = btc.change ? parseFloat(btc.change) : 0;
+        
+        if (btcTrend.change <= -2.5) {
+          btcTrend.bias = "BEARISH";
+          btcTrend.news = "⚠️ HATI-HATI! BTC sedang mengalami koreksi tajam. Risiko koin alternatif (Altcoin) terseret turun sangat besar. Sangat disarankan untuk menahan posisi (Wait & See).";
+        } else if (btcTrend.change >= 2.5) {
+          btcTrend.bias = "BULLISH";
+          btcTrend.news = "🚀 BTC Melaju Kuat! Sentimen pasar sangat positif. Ini adalah momentum terbaik untuk mencari koin-koin yang siap breakout (menembus resistensi).";
+        } else {
+          btcTrend.bias = "SIDEWAYS";
+          btcTrend.news = "⚖️ BTC Terpantau Stabil. Masa konsolidasi ini adalah waktu yang pas bagi Altcoin berkapitalisasi kecil untuk unjuk gigi. Peluang scalping terbuka lebar.";
+        }
+      }
     }
   } catch (error) {
-    console.error("⚠️ Gagal mengambil data market dari Indodax:", error.message);
+    console.error("⚠️ Gagal mengambil data market:", error.message);
   } finally {
     cache.isFetching = false;
   }
 }
 
-// Advanced AI & Quantitative Metric Analysis Engine
-function analyzeCoin(t, pairName) {
+// --- ADVANCED AI METRIC ANALYSIS ENGINE ---
+function analyzeCoin(t, pairName, btcBias) {
   const price = parseFloat(t.last || 0);
   const vol = parseFloat(t.vol_idr || 0);
   const high = parseFloat(t.high || price);
@@ -104,12 +129,13 @@ function analyzeCoin(t, pairName) {
   const buy_price = parseFloat(t.buy || price);
   const sell_price = parseFloat(t.sell || price);
   
-  if (!price || vol < 100000000 || high === low) return null;
+  if (!price || vol < 150000000 || high === low) return null; // Filter volume lebih ketat (min 150 Juta IDR)
 
   const change = t.change ? parseFloat(t.change) : ((high - low) / (low || 1)) * 100;
   const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
   const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
-  const volatility = ((high - low) / low) * 100;
+  let volatility = ((high - low) / low) * 100;
+  if (volatility <= 0) volatility = 0.5; // Pengaman agar tidak NaN saat dihitung
   const vola_score = Math.min(10, volatility / 2);
 
   const safe_buy_price = buy_price > 0 ? buy_price : price;
@@ -119,33 +145,49 @@ function analyzeCoin(t, pairName) {
   const buying_pressure = ((price - low) / (high - low)) * 100;
   let pressure_score = buying_pressure > 80 ? 3 : buying_pressure < 20 ? 4 : 1;
 
-  let news_headline = "Konsolidasi normal. Aksi beli dan jual seimbang.";
+  // --- INTERACTIVE SYSTEM CALCULATION ---
+  // Perhitungan Stop Loss (SL) & Take Profit (TP) dilakukan di SERVER agar aman dari NaN
+  const safeVolatility = Math.min(volatility, 15); // Batasi max volatilitas 15% untuk rumus
+  const target_tp = price * (1 + (safeVolatility * 1.5) / 100);
+  const target_sl = price * (1 - (safeVolatility * 1.0) / 100);
+
+  // Penyesuaian Skor dengan Pengaruh Bitcoin
+  let btc_adjustment = btcBias === "BULLISH" ? 2 : btcBias === "BEARISH" ? -3 : 0;
+  const score = (whale_score * 2) + momentum_score + vola_score + pressure_score - spread_penalty + btc_adjustment;
+  let signal = score >= 18 ? "STRONG BUY" : score > 12 ? "BUY" : score < 6 ? "SELL" : "HOLD";
+
+  // Narasi interaktif berbasis kecerdasan komputasi
+  let news_headline = "Kalkulasi standar. Volume jual-beli terpantau cukup imbang. Cocok untuk diamati terlebih dahulu.";
   let news_impact = "NEUTRAL";
-  let impact_desc = "Harga bergerak stabil dalam rentang rata-rata.";
+  let impact_desc = "Indikator volatilitas berada di ambang batas wajar. Tidak ada pergerakan institusi (Whale) yang mencolok.";
 
   if (spread_penalty >= 5) {
-    news_headline = "Peringatan Likuiditas! Orderbook sangat tipis.";
+    news_headline = "🚨 PERINGATAN KERAS! Jarak harga Beli-Jual (Spread) terlalu besar!";
     news_impact = "BEARISH";
-    impact_desc = "Risiko slippage sangat tinggi. Hindari.";
-  } else if (whale_score > 7 && buying_pressure > 85) {
-    news_headline = "Breakout Alert: Institusi mendorong harga menembus resisten.";
+    impact_desc = "Jangan masuk! Risiko Anda terjebak harga (nyangkut) sangat tinggi. Likuiditas koin ini sangat buruk.";
+    signal = "SELL"; 
+  } else if (score >= 18 && btcBias === "BULLISH") {
+    news_headline = "🔥 LUAR BIASA! Hasil hitungan algoritma mendeteksi tekanan beli masif dibantu dorongan tren BTC.";
     news_impact = "BULLISH";
-    impact_desc = "Tekanan beli mendominasi di pucuk, potensi rally lanjutan sangat kuat.";
-  } else if (whale_score > 6 && buying_pressure < 20 && change < -3) {
-    news_headline = "Fase Oversold: Terjadi panic selling masif di pasar retail.";
+    impact_desc = "Bagus sekali! Institusi besar sedang melakukan akumulasi. Momentum penembusan resistensi sangat kuat. Silakan eksekusi beli dengan berpedoman pada Target TP di atas!";
+  } else if (score >= 15 && buying_pressure > 80) {
+    news_headline = "📈 Peluang Emas! Koin ini sedang mengalami tren naik mandiri terlepas dari pergerakan pasar.";
     news_impact = "BULLISH";
-    impact_desc = "Indikator oversold. Potensi pantulan atau reversal.";
+    impact_desc = "Tekanan pembeli berhasil mendominasi. Potensi lonjakan harga lanjutan terlihat sangat rasional. Boleh tambah posisi jika sudah punya.";
+  } else if (score > 10 && buying_pressure < 20 && change < -5) {
+    news_headline = "📉 FASE OVERSOLD! Harga sudah ditekan sangat murah oleh para penjual panik (Panic Seller).";
+    news_impact = "BULLISH";
+    impact_desc = "Dari hasil hitungan, koin ini berada di dasar (support) harian. Sangat menarik untuk mulai mencicil beli (akumulasi) demi mengambil keuntungan dari pantulan (rebound) harga.";
   } else if (change < -7) {
-    news_headline = "Aksi distribusi dan Take Profit besar-besaran berlangsung.";
+    news_headline = "⚠️ DISTRIBUSI BESAR! Terjadi aksi lepas barang secara brutal oleh para cukong.";
     news_impact = "BEARISH";
-    impact_desc = "Tekanan jual menembus batas support harian. Waspada koreksi dalam.";
+    impact_desc = "Harga telah menembus zona aman ke bawah. Sangat disarankan untuk segera menutup posisi jika punya, atau menjauh sepenuhnya dari koin ini.";
   }
-
-  const score = (whale_score * 2) + momentum_score + vola_score + pressure_score - spread_penalty + (news_impact === "BULLISH" ? 2 : news_impact === "BEARISH" ? -3 : 0);
-  let signal = score >= 18 ? "STRONG BUY" : score > 12 ? "BUY" : score < 6 ? "SELL" : "HOLD";
 
   return { 
     price, vol, change, score, signal, news_headline, news_impact, impact_desc,
+    target_tp: parseFloat(target_tp.toFixed(2)),
+    target_sl: parseFloat(target_sl.toFixed(2)),
     technicals: {
       spread: spread_pct.toFixed(2),
       buying_pressure: buying_pressure.toFixed(0),
@@ -154,7 +196,7 @@ function analyzeCoin(t, pairName) {
   };
 }
 
-// API Endpoints
+// --- API ENDPOINTS ---
 app.get("/portfolio", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
@@ -166,18 +208,27 @@ app.get("/portfolio", async (req, res) => {
 
 app.post("/buy", async (req, res) => {
   const { pair, entry_price, target_tp, target_sl, news_headline, news_impact } = req.body;
-  if (!pair || !entry_price) return res.status(400).json({ error: "Data masukan tidak lengkap" });
+  
+  // Keamanan ketat untuk memastikan tidak ada nilai "NaN" yang menyelinap ke PostgreSQL
+  if (!pair || !entry_price || isNaN(entry_price) || isNaN(target_tp) || isNaN(target_sl)) {
+    console.error("Gagal Beli - Data Ditolak:", req.body);
+    return res.status(400).json({ error: "Data kalkulasi tidak valid atau tidak lengkap." });
+  }
 
   try {
-    const amount = 1; 
+    // Kita asumsikan pengguna bertransaksi dengan alokasi simulasi konstan (Misal: 100.000 IDR per posisi)
+    const mock_capital = 100000;
+    const amount = mock_capital / entry_price; 
+
     await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, 'OPEN')`,
       [pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact]
     );
-    res.json({ success: true, message: "Berhasil menambahkan ke portofolio aktif!" });
+    res.json({ success: true, message: `Berhasil mengeksekusi pembelian ${pair.toUpperCase()}!` });
   } catch (err) {
-    res.status(500).json({ error: "Gagal menyimpan posisi trading" });
+    console.error("❌ Error Eksekusi Buy Database:", err);
+    res.status(500).json({ error: "Gagal menyimpan posisi trading ke dalam server." });
   }
 });
 
@@ -189,6 +240,7 @@ app.post("/sell", async (req, res) => {
     await pool.query("UPDATE portfolio_positions SET status='CLOSED' WHERE id=$1", [id]);
     res.json({ success: true, message: "Posisi berhasil ditutup." });
   } catch (err) {
+    console.error("❌ Error Eksekusi Sell Database:", err);
     res.status(500).json({ error: "Gagal menutup posisi trading" });
   }
 });
@@ -223,7 +275,7 @@ app.delete("/watchlist/:pair", async (req, res) => {
   }
 });
 
-// Global WebSocket Worker Thread Interval Engine
+// --- WORKER SOCKET SINKRONISASI PASAR ---
 let isWorkerRunning = false;
 async function streamWorker() {
   if (isWorkerRunning) return;
@@ -234,13 +286,15 @@ async function streamWorker() {
     const tickers = cache.tickers;
     if (Object.keys(tickers).length === 0) return;
 
-    // Ambil daftar watchlist dari database untuk mapping status
     const watchData = await pool.query("SELECT pair FROM watchlist");
     const watchPairs = watchData.rows.map(row => row.pair);
 
     const results = [];
     Object.keys(tickers).forEach((k) => {
-      const r = analyzeCoin(tickers[k], k);
+      // Kita tidak mengirim btc_idr ke dalam daftar koin Altcoin biasa
+      if(k === "btc_idr") return; 
+
+      const r = analyzeCoin(tickers[k], k, btcTrend.bias);
       if (r) {
         results.push({ 
           pair: k, 
@@ -252,7 +306,6 @@ async function streamWorker() {
 
     const top = results.sort((a, b) => b.score - a.score).slice(0, 15);
 
-    // Update real-time Profit and Loss (PnL) portofolio aktif
     const openPositions = await pool.query("SELECT id, pair, entry_price, amount FROM portfolio_positions WHERE status='OPEN'");
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
@@ -266,7 +319,7 @@ async function streamWorker() {
     const watchlistData = results.filter(r => watchPairs.includes(r.pair));
 
     io.emit("market_data", {
-      btc: tickers["btc_idr"]?.last || 0,
+      btc: btcTrend, // Mengirim objek tren BTC secara utuh
       top,
       portfolio: portfolio.rows,
       watchlist: watchlistData
@@ -278,12 +331,11 @@ async function streamWorker() {
   }
 }
 
-// Menjalankan streaming data pasar terpusat secara berkala (Aman dari Rate Limit)
 setInterval(streamWorker, 10000);
 
 io.on("connection", (socket) => {
-  console.log(`Koneksi terminal baru terbentuk: ${socket.id}`);
-  socket.emit("market_data", { btc: 0, top: [], portfolio: [], watchlist: [], initial: true });
+  console.log(`📡 Koneksi terminal baru: ${socket.id}`);
+  socket.emit("market_data", { btc: btcTrend, top: [], portfolio: [], watchlist: [], initial: true });
 });
 
-server.listen(PORT, () => console.log(`🚀 TERMINAL QUANT ONLINE PADA PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 AI QUANT ENGINE ONLINE - PORT ${PORT}`));
