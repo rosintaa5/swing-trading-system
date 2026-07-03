@@ -152,24 +152,21 @@ function analyzeCoin(t, pairName, btcBias) {
   const buying_pressure = ((price - low) / (high - low)) * 100;
 
   // --- PERHITUNGAN DINAMIS ATR (Average True Range) ---
-  // Mengukur rentang pergerakan riil harian untuk adaptasi Stop Loss / Take Profit
   let dailyRange = high - low;
-  if (dailyRange <= 0) dailyRange = price * 0.05; // Fallback 5% jika range cacat
+  if (dailyRange <= 0) dailyRange = price * 0.05;
 
   const target_tp = price + (dailyRange * 1.5);
   const target_sl = Math.max(0.0001, price - (dailyRange * 1.0)); 
   const rrr = ((target_tp - price) / (price - target_sl || 1)).toFixed(1);
 
-  // Penyesuaian Skor dengan Iklim Makro
   let btc_adjustment = btcBias === "BULLISH" ? 2 : btcBias === "BEARISH" ? -4 : 0;
   const score = (whale_score * 2) + momentum_score + btc_adjustment;
   let signal = score >= 17 ? "STRONG BUY" : score > 11 ? "BUY" : score < 6 ? "SELL" : "HOLD";
 
-  // --- INTERACTIVE & CEREWET WARNING SYSTEM ---
+  // --- INTERACTIVE WARNING SYSTEM ---
   let news_headline = "Pergerakan harga wajar. Keseimbangan antara pembeli dan penjual cukup stabil.";
   let news_impact = "NEUTRAL";
   let capital_advice = "Gunakan maksimal 5% dari modal portofolio Anda.";
-  
   let watch_status = "TAHAN DULU (FASE KONSOLIDASI)";
   let watch_desc = "Koin bergerak tanpa arah tren yang jelas. Belum ideal untuk masuk dalam waktu dekat.";
 
@@ -217,7 +214,12 @@ function analyzeCoin(t, pairName, btcBias) {
 app.get("/portfolio", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
-    res.json(result.rows);
+    // Suntikkan Current Price agar Frontend bisa langsung menghitung peringatan SL/TP manual jika dibutuhkan
+    const rows = result.rows.map(p => {
+      const t = cache.tickers[p.pair];
+      return { ...p, current_price: t ? parseFloat(t.last) : p.entry_price };
+    });
+    res.json(rows);
   } catch (err) {
     res.status(500).json({ error: "Gagal memuat daftar portofolio" });
   }
@@ -231,17 +233,15 @@ app.post("/buy", async (req, res) => {
   }
 
   try {
-    // Menghitung ulang SL/TP dengan metode ATR dinamis murni di Backend berdasarkan Entry Kustom
     const numEntry = parseFloat(entry_price);
     const numHigh = parseFloat(high) || numEntry;
     const numLow = parseFloat(low) || numEntry;
     
     let dailyRange = numHigh - numLow;
-    if (dailyRange <= 0) dailyRange = numEntry * 0.05; // Fallback jika tidak ada range (misal koin baru listing)
+    if (dailyRange <= 0) dailyRange = numEntry * 0.05;
 
     const final_tp = numEntry + (dailyRange * 1.5);
     const final_sl = Math.max(0.0001, numEntry - (dailyRange * 1.0));
-    
     const amount = capital / numEntry; 
 
     await pool.query(
@@ -251,7 +251,6 @@ app.post("/buy", async (req, res) => {
     );
     res.json({ success: true, message: `Berhasil mengalokasikan Rp ${capital.toLocaleString('id-ID')} ke posisi ${pair.toUpperCase()}!` });
   } catch (err) {
-    console.error("❌ Error INSERT SQL Database:", err.message);
     res.status(500).json({ error: `Gagal menyimpan ke Server: ${err.message}` });
   }
 });
@@ -305,21 +304,28 @@ async function streamWorker() {
     });
 
     const top = results.sort((a, b) => b.score - a.score).slice(0, 20);
-
-    const openPositions = await pool.query("SELECT id, pair, entry_price, amount FROM portfolio_positions WHERE status='OPEN'");
-    for (const p of openPositions.rows) {
-      const t = tickers[p.pair];
-      if (t) {
-        const pnl = (parseFloat(t.last) - p.entry_price) * p.amount;
-        await pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]);
-      }
-    }
-
-    const portfolio = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const watchlistData = results.filter(r => watchPairs.includes(r.pair));
 
+    // Optimasi Pembaruan Data Portofolio & Injeksi Current Price
+    const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
+    const portfolioData = [];
+    
+    for (const p of openPositions.rows) {
+      const t = tickers[p.pair];
+      let current_price = p.entry_price;
+      let pnl = p.pnl;
+      
+      if (t) {
+        current_price = parseFloat(t.last);
+        pnl = (current_price - p.entry_price) * p.amount;
+        // Update senyap (Background Update) ke DB
+        pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
+      }
+      portfolioData.push({ ...p, current_price, pnl });
+    }
+
     latestMarketData.top = top;
-    latestMarketData.portfolio = portfolio.rows;
+    latestMarketData.portfolio = portfolioData;
     latestMarketData.watchlist = watchlistData;
 
     io.emit("market_data", latestMarketData);
