@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { socket } from "@/lib/socket";
 
 const rawAPI = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -70,13 +70,11 @@ export default function Page() {
     }
   }, []);
 
-  // Format Helper: Menyulap angka menjadi Rupiah untuk tampilan
   const formatRupiah = (val: string) => {
     const rawNum = val.replace(/[^0-9]/g, '');
     return rawNum ? parseInt(rawNum).toLocaleString('id-ID') : '';
   };
 
-  // Format Helper: Untuk Harga Koin Desimal (Tidak memaksa buang koma/titik desimal)
   const formatDecimal = (val: string) => {
     return val.replace(/[^0-9.]/g, ''); 
   };
@@ -91,7 +89,6 @@ export default function Page() {
     setBuyModal(prev => ({ ...prev, customEntryRaw: safeDec, customEntryDisplay: safeDec }));
   };
 
-  // Membuka Popup Modal Form Entry
   const openBuyModal = (coin: any) => {
     setBuyModal({
       isOpen: true,
@@ -107,7 +104,6 @@ export default function Page() {
     setBuyModal({ isOpen: false, coin: null, customEntryRaw: "", customEntryDisplay: "", capitalRaw: "100000", capitalDisplay: "100.000" });
   };
 
-  // Eksekusi Submit dari dalam Modal ke Backend
   const submitBuy = async () => {
     const { coin, customEntryRaw, capitalRaw } = buyModal;
     const numEntry = parseFloat(customEntryRaw);
@@ -122,7 +118,6 @@ export default function Page() {
     closeBuyModal(); 
     
     try {
-      // Mengirimkan High dan Low koin agar backend dapat menghitung ATR murni yang presisi
       const res = await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -189,6 +184,29 @@ export default function Page() {
   const totalModalActive = portfolio.reduce((sum, item) => sum + (item.initial_capital || 0), 0);
   const totalPnLActive = portfolio.reduce((sum, item) => sum + (item.pnl || 0), 0);
 
+  // --- NEW ENGINE: TP/SL PROXIMITY ALERT SCANNER ---
+  // Sistem menganalisis koin mana yang perjalanannya sudah 75% mendekati batas TP atau SL
+  const approachingTargets = useMemo(() => {
+    return portfolio.map((p) => {
+      if (!p.current_price) return null;
+      const gapTP = p.target_tp - p.entry_price;
+      const gapSL = p.entry_price - p.target_sl;
+      const move = p.current_price - p.entry_price;
+
+      // Harga sedang naik (Profit)
+      if (move > 0 && gapTP > 0) {
+        const progress = (move / gapTP) * 100;
+        if (progress >= 75) return { ...p, type: 'TP', progress: Math.min(progress, 100) };
+      } 
+      // Harga sedang turun (Rugi)
+      else if (move < 0 && gapSL > 0) {
+        const progress = (Math.abs(move) / gapSL) * 100;
+        if (progress >= 75) return { ...p, type: 'SL', progress: Math.min(progress, 100) };
+      }
+      return null;
+    }).filter(Boolean);
+  }, [portfolio]);
+
   const displayedCoins = signalFilter === "ALL" 
     ? data.top 
     : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
@@ -254,7 +272,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* HEADER UTAMA */}
       <header className="main-header">
         <div>
           <h1>⚡ AI TERMINAL SCANNER PRO</h1>
@@ -265,7 +282,6 @@ export default function Page() {
         </div>
       </header>
 
-      {/* PANEL UTAMA: SENTIMEN BITCOIN & NEWS FEED */}
       <div className={`btc-regime-card ${data.btc.bias.toLowerCase()}`}>
         <div className="btc-info-row">
           <div>
@@ -280,7 +296,6 @@ export default function Page() {
           <p><b>Rangkuman:</b> {data.btc.news}</p>
         </div>
         
-        {/* NEW SECTION: LATEST NEWS STREAM */}
         {data.btc.newsList && data.btc.newsList.length > 0 && (
           <div className="btc-news-stream">
             <h4>📰 Live News & Analisis Jaringan</h4>
@@ -297,7 +312,6 @@ export default function Page() {
         )}
       </div>
 
-      {/* NAVIGASI & FILTER */}
       <div className="control-bar">
         <nav className="tab-nav">
           <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Scanner ({displayedCoins.length})</button>
@@ -314,7 +328,6 @@ export default function Page() {
         )}
       </div>
 
-      {/* VIEW PANEL 1: SCANNER */}
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
@@ -385,7 +398,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 2: WATCHLIST */}
       {activeTab === "watchlist" && (
         <section className="view-section">
           {data.watchlist.length === 0 ? (
@@ -433,7 +445,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 3: PORTFOLIO & DASHBOARD PNL */}
       {activeTab === "portfolio" && (
         <section className="view-section">
           {/* DASHBOARD PNL GLOBAL */}
@@ -450,6 +461,30 @@ export default function Page() {
             </div>
           </div>
 
+          {/* NEW: RANGKUMAN PERINGATAN TP/SL */}
+          {approachingTargets.length > 0 && (
+            <div className="alert-summary-board">
+              <h3>🚨 Rangkuman Peringatan Posisi</h3>
+              <p>Koin berikut sudah melampaui 75% jarak pergerakan menuju batas otomatis yang Anda buat.</p>
+              <div className="alert-cards-container">
+                {approachingTargets.map((item: any) => (
+                  <div key={`alert-${item.id}`} className={`alert-card ${item.type.toLowerCase()}`}>
+                    <div className="alert-header">
+                      <strong>{item.pair.replace("_", "/").toUpperCase()}</strong>
+                      <span className="alert-badge">{item.type === 'TP' ? '🎯 Mendekati TP' : '⚠️ Ancaman SL'}</span>
+                    </div>
+                    <div className="alert-progress">
+                      <span>Progres ke Target: {item.progress.toFixed(1)}%</span>
+                      <div className="mini-progress-bg">
+                        <div className="mini-progress-fill" style={{ width: `${item.progress}%` }}></div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {portfolio.length === 0 ? (
             <div className="empty-placeholder">Buku portofolio Anda kosong. Silakan masuk ke pasar.</div>
           ) : (
@@ -463,7 +498,8 @@ export default function Page() {
                   </div>
 
                   <div className="prices-summary-grid">
-                    <div><span>Harga Beli (Entry)</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Harga Saat Ini</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Harga Entry</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                     <div><span>Batas SL (ATR)</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                     <div><span>Sasaran TP (ATR)</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                   </div>
@@ -485,7 +521,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* STYLESHEET EMBEDDED DENGAN PENAMBAHAN */}
       <style dangerouslySetInnerHTML={{ __html: `
         :root {
           --bg-dark-base: #060913; --bg-card: #0d1323; --bg-inner-box: #131b30;
@@ -658,6 +693,24 @@ export default function Page() {
         .metric-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
         .metric-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
 
+        /* CSS BARU UNTUK RANGKUMAN TP / SL */
+        .alert-summary-board { background: rgba(255,255,255,0.02); border: 1px dashed rgba(255,255,255,0.15); padding: 20px; border-radius: 12px; margin-bottom: 25px; }
+        .alert-summary-board h3 { font-size: 16px; font-weight: 800; color: #facc15; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+        .alert-summary-board p { font-size: 13px; color: var(--text-dim); margin-bottom: 18px; }
+        .alert-cards-container { display: flex; gap: 15px; flex-wrap: wrap; }
+        .alert-card { flex: 1; min-width: 250px; padding: 18px; border-radius: 10px; background: var(--bg-inner-box); border: 1px solid var(--border-color); }
+        .alert-card.tp { border-top: 3px solid var(--theme-green); box-shadow: 0 -4px 15px rgba(16,185,129,0.08); }
+        .alert-card.sl { border-top: 3px solid var(--theme-red); box-shadow: 0 -4px 15px rgba(239,68,68,0.08); }
+        .alert-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+        .alert-header strong { font-size: 16px; }
+        .alert-badge { font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 12px; }
+        .alert-card.tp .alert-badge { background: rgba(16,185,129,0.2); color: var(--theme-green); }
+        .alert-card.sl .alert-badge { background: rgba(239,68,68,0.2); color: var(--theme-red); }
+        .alert-progress { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+        .mini-progress-bg { width: 100%; height: 6px; background: #0f172a; border-radius: 4px; margin-top: 8px; overflow: hidden; border: 1px solid rgba(255,255,255,0.05); }
+        .alert-card.tp .mini-progress-fill { height: 100%; background: var(--theme-green); transition: width 0.3s ease-in-out; }
+        .alert-card.sl .mini-progress-fill { height: 100%; background: var(--theme-red); transition: width 0.3s ease-in-out; }
+
         .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
         .portfolio-row-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
         .port-left-section h3 { font-size: 18px; font-weight: 800; color: white; }
@@ -667,7 +720,7 @@ export default function Page() {
         .prices-summary-grid { display: flex; gap: 25px; background: #080c16; padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border-color); }
         .prices-summary-grid div { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
         .prices-summary-grid span { color: var(--text-dim); }
-        .prices-summary-grid b { font-size: 13px; color: #fff; }
+        .prices-summary-grid b { font-size: 13px; color: #94a3b8; }
 
         .pnl-showcase { text-align: right; min-width: 130px; }
         .pnl-showcase span { font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 2px; }
