@@ -22,32 +22,35 @@ export default function Page() {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
 
+  // --- STATE CUSTOM TOAST UI ---
+  const [toast, setToast] = useState<{ show: boolean, msg: string, type: "success" | "error" | "info" }>({ show: false, msg: "", type: "info" });
+
+  const showToast = (msg: string, type: "success" | "error" | "info") => {
+    setToast({ show: true, msg, type });
+    setTimeout(() => setToast({ show: false, msg: "", type: "info" }), 4000);
+  };
+
+  // --- STATE BUY MODAL FORM ---
+  const [buyModal, setBuyModal] = useState<{ isOpen: boolean, coin: any, customEntry: string, capital: string }>({
+    isOpen: false,
+    coin: null,
+    customEntry: "",
+    capital: "100000" // Modal dasar default 100rb IDR
+  });
+
   useEffect(() => {
     socket.connect();
-
-    socket.on("connect", () => {
-      setIsConnected(true);
-    });
-
-    socket.on("disconnect", () => {
-      setIsConnected(false);
-    });
-
+    socket.on("connect", () => setIsConnected(true));
+    socket.on("disconnect", () => setIsConnected(false));
     socket.on("market_data", (res) => {
       if (res) {
-        setData({
-          btc: res.btc,
-          top: res.top || [],
-          watchlist: res.watchlist || []
-        });
+        setData({ btc: res.btc, top: res.top || [], watchlist: res.watchlist || [] });
         if (res.portfolio) setPortfolio(res.portfolio);
       }
     });
 
     return () => {
-      socket.off("market_data");
-      socket.off("connect");
-      socket.off("disconnect");
+      socket.off("market_data"); socket.off("connect"); socket.off("disconnect");
       socket.disconnect();
     };
   }, []);
@@ -57,21 +60,47 @@ export default function Page() {
       const res = await fetch(`${API}/portfolio`);
       if (res.ok) setPortfolio(await res.json());
     } catch (e) {
-      console.error("Gagal sinkronisasi data manual.", e);
+      console.error("Gagal sinkronisasi.", e);
     }
   }, []);
 
-  const handleBuy = async (coin: any) => {
+  // Membuka Popup Modal Form Entry
+  const openBuyModal = (coin: any) => {
+    setBuyModal({
+      isOpen: true,
+      coin: coin,
+      customEntry: coin.price.toString(),
+      capital: "100000"
+    });
+  };
+
+  const closeBuyModal = () => {
+    setBuyModal({ isOpen: false, coin: null, customEntry: "", capital: "100000" });
+  };
+
+  // Eksekusi Submit dari dalam Modal
+  const submitBuy = async () => {
+    const { coin, customEntry, capital } = buyModal;
+    const numEntry = parseFloat(customEntry);
+    const numCapital = parseFloat(capital);
+
+    if (!numEntry || !numCapital || numEntry <= 0 || numCapital <= 0) {
+      showToast("Gagal: Harga Entry dan Modal IDR harus berupa angka valid!", "error");
+      return;
+    }
+
     setLoadingAction(`buy_${coin.pair}`);
+    closeBuyModal(); // Tutup modal saat memproses
+    
     try {
       const res = await fetch(`${API}/buy`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           pair: coin.pair,
-          entry_price: coin.price,
-          target_tp: coin.target_tp, 
-          target_sl: coin.target_sl,
+          entry_price: numEntry,
+          capital: numCapital,
+          volatility: coin.technicals.volatility,
           news_headline: coin.news_headline,
           news_impact: coin.news_impact
         })
@@ -81,9 +110,9 @@ export default function Page() {
       if (!res.ok) throw new Error(resData.error || "Gagal mencatat transaksi");
       
       await syncPortfolioManual();
-      alert(`✅ SUKSES!\n${resData.message}\n🎯 Target TP: Rp ${coin.target_tp.toLocaleString()}\n🛡️ Batas SL: Rp ${coin.target_sl.toLocaleString()}`);
+      showToast(resData.message, "success");
     } catch (e: any) {
-      alert(`❌ Perbaikan Database Aktif: ${e.message}`);
+      showToast(`Transaksi Ditolak: ${e.message}`, "error");
     } finally {
       setLoadingAction(null);
     }
@@ -99,9 +128,9 @@ export default function Page() {
       });
       if (!res.ok) throw new Error();
       await syncPortfolioManual();
-      alert(`✅ Posisi ${pairName.toUpperCase()} sukses ditutup dan disimpan.`);
+      showToast(`Posisi ${pairName.toUpperCase()} berhasil direalisasikan.`, "success");
     } catch (e) {
-      alert("❌ Gagal menutup transaksi.");
+      showToast("Gagal menutup transaksi jaringan.", "error");
     } finally {
       setLoadingAction(null);
     }
@@ -111,29 +140,87 @@ export default function Page() {
     try {
       if (isCurrentlyWatched) {
         await fetch(`${API}/watchlist/${pair}`, { method: "DELETE" });
+        showToast(`${pair.toUpperCase()} dihapus dari radar pantau.`, "info");
       } else {
         await fetch(`${API}/watchlist`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pair })
         });
+        showToast(`${pair.toUpperCase()} berhasil ditambahkan ke radar!`, "success");
       }
     } catch (e) {
-      console.error(e);
+      showToast("Gagal mengubah daftar pantauan.", "error");
     }
   };
 
-  // Logika Filter Sinyal
   const displayedCoins = signalFilter === "ALL" 
     ? data.top 
     : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
 
   return (
     <div className="trading-terminal">
+      {/* ELEMEN CUSTOM TOAST (Pengganti Alert) */}
+      <div className={`toast-notification ${toast.show ? 'show' : ''} ${toast.type}`}>
+        <span className="toast-icon">
+          {toast.type === 'success' ? '✅' : toast.type === 'error' ? '❌' : 'ℹ️'}
+        </span>
+        <p>{toast.msg}</p>
+      </div>
+
+      {/* ELEMEN BUY MODAL FORM POPUP */}
+      {buyModal.isOpen && buyModal.coin && (
+        <div className="modal-overlay">
+          <div className="modal-box">
+            <div className="modal-header">
+              <h2>Setup Transaksi {buyModal.coin.pair.replace("_", "/").toUpperCase()}</h2>
+              <button className="btn-close-modal" onClick={closeBuyModal}>✕</button>
+            </div>
+            
+            <div className="modal-body">
+              <div className="input-group">
+                <label>Nominal Investasi / Modal (IDR)</label>
+                <input 
+                  type="number" 
+                  value={buyModal.capital} 
+                  onChange={(e) => setBuyModal({...buyModal, capital: e.target.value})}
+                  placeholder="Misal: 100000"
+                />
+              </div>
+
+              <div className="input-group">
+                <label>Harga Beli (Entry Target)</label>
+                <input 
+                  type="number" 
+                  value={buyModal.customEntry} 
+                  onChange={(e) => setBuyModal({...buyModal, customEntry: e.target.value})}
+                  placeholder={`Harga Pasar: ${buyModal.coin.price}`}
+                />
+                <span className="input-hint">Default terisi harga pasar. Anda bisa mengubahnya untuk order limit.</span>
+              </div>
+
+              <div className="modal-info-panel">
+                <h4>Simulasi Metrik Berdasarkan Harga Entry Anda:</h4>
+                <ul>
+                  <li>Estimasi Target Profit: <strong className="text-green">+ {(parseFloat(buyModal.customEntry) * (1 + (Math.min(parseFloat(buyModal.coin.technicals.volatility), 12) * 1.6) / 100)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></li>
+                  <li>Batas Stop Loss: <strong className="text-red">- {(parseFloat(buyModal.customEntry) * (1 - (Math.min(parseFloat(buyModal.coin.technicals.volatility), 12) * 1.0) / 100)).toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong></li>
+                </ul>
+              </div>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn-cancel" onClick={closeBuyModal}>Batal</button>
+              <button className="btn-confirm-buy" onClick={submitBuy}>⚡ Konfirmasi Beli</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HEADER UTAMA */}
       <header className="main-header">
         <div>
           <h1>⚡ AI TERMINAL SCANNER PRO</h1>
-          <p>Sistem Deteksi Sinyal & Manajemen Risiko Otomatis</p>
+          <p>Sistem Deteksi Sinyal, Money Management & Radar Kripto Otomatis</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
           <span className="dot"></span> {isConnected ? 'LIVE ENGINE CONNECTED' : 'OFFLINE SYNC'}
@@ -161,7 +248,7 @@ export default function Page() {
         <nav className="tab-nav">
           <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Scanner ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Radar Pantau ({data.watchlist.length})</button>
-          <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Aktif ({portfolio.length})</button>
+          <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Buku Portofolio ({portfolio.length})</button>
         </nav>
 
         {activeTab === "scanner" && (
@@ -199,25 +286,23 @@ export default function Page() {
                     </span>
                   </div>
 
-                  {/* KOTAK HARGA SASARAN SL, ENTRY & TP YANG JELAS */}
                   <div className="matrix-target-box">
                     <div className="matrix-cell">
-                      <span className="cell-title">🛡️ BATAS STOP LOSS</span>
+                      <span className="cell-title">🛡️ BATAS SL</span>
                       <strong className="text-red">{c.target_sl.toLocaleString()}</strong>
                     </div>
                     <div className="matrix-cell border-sides">
-                      <span className="cell-title">🔑 HARGA ENTRY</span>
+                      <span className="cell-title">🔑 CURRENT PRICE</span>
                       <strong className="text-white">{c.price.toLocaleString()}</strong>
                     </div>
                     <div className="matrix-cell">
-                      <span className="cell-title">🎯 TARGET TAKE PROFIT</span>
+                      <span className="cell-title">🎯 TARGET TP</span>
                       <strong className="text-green">{c.target_tp.toLocaleString()}</strong>
                     </div>
                   </div>
 
-                  {/* FITUR BERMANFAAT: RISK REWARD RATIO & MODAL */}
                   <div className="extra-analytics-row">
-                    <div className="analytic-chip">📈 <b>Rasio RRR:</b> 1 : {c.rrr}</div>
+                    <div className="analytic-chip">📈 <b>RRR:</b> 1 : {c.rrr}</div>
                     <div className="analytic-chip allocation">💰 {c.capital_advice}</div>
                   </div>
 
@@ -236,8 +321,9 @@ export default function Page() {
                     <p className="narrative-text">"{c.news_headline}"</p>
                   </div>
 
-                  <button className="execute-buy-button" onClick={() => handleBuy(c)} disabled={loadingAction === `buy_${c.pair}` || c.signal === "SELL"}>
-                    {loadingAction === `buy_${c.pair}` ? "Mengunci Transaksi..." : c.signal === "SELL" ? "🚨 Risiko Terlalu Tinggi" : "⚡ Buka Posisi Trading"}
+                  {/* Tombol memanggil Modal Beli */}
+                  <button className="execute-buy-button" onClick={() => openBuyModal(c)} disabled={c.signal === "SELL"}>
+                    {c.signal === "SELL" ? "🚨 Dilarang Beli (Risiko Tinggi)" : "⚡ Atur & Buka Posisi"}
                   </button>
                 </div>
               ))}
@@ -246,26 +332,47 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 2: RADAR PANTAU */}
+      {/* VIEW PANEL 2: WATCHLIST (DI-UPGRADE MENJADI DETAIL) */}
       {activeTab === "watchlist" && (
         <section className="view-section">
           {data.watchlist.length === 0 ? (
-            <div className="empty-placeholder">Tidak ada koin di dalam radar pantauan spesial Anda.</div>
+            <div className="empty-placeholder">Anda belum menambahkan koin ke radar pantauan. Klik "Pantau" di tab Scanner.</div>
           ) : (
-            <div className="cards-responsive-grid">
+            <div className="watchlist-list-view">
               {data.watchlist.map((c: any) => (
-                <div key={c.pair} className="coin-card-wrapper watched-border">
-                  <div className="card-header-info">
-                    <h2>{c.pair.replace("_", " / ").toUpperCase()}</h2>
-                    <button className="remove-watch-btn" onClick={() => toggleWatchlist(c.pair, true)}>Hapus</button>
+                <div key={c.pair} className="watchlist-detailed-card">
+                  <div className="watch-header">
+                    <div className="watch-title-group">
+                      <h2>{c.pair.replace("_", " / ").toUpperCase()}</h2>
+                      <span className={`signal-label ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.signal}</span>
+                    </div>
+                    <button className="remove-watch-btn" onClick={() => toggleWatchlist(c.pair, true)}>✕ Hapus</button>
                   </div>
-                  <div className="price-display-block">
-                    <span className="current-price-num">{c.price.toLocaleString()} IDR</span>
+
+                  <div className="watch-price-row">
+                    <span className="watch-price">{c.price.toLocaleString()} IDR</span>
+                    <span className={`price-pct-change ${c.change >= 0 ? 'plus' : 'minus'}`}>
+                      {c.change >= 0 ? '↗' : '↘'} {c.change?.toFixed(2)}%
+                    </span>
                   </div>
-                  <div className="ai-narrative-card" style={{margin: "12px 0"}}>
-                    <p className="narrative-text" style={{fontSize: "13px"}}>"{c.news_headline}"</p>
+
+                  {/* Papan Informasi Deskriptif */}
+                  <div className="watch-info-board">
+                    <div className="info-status-bar">
+                      <span className="info-label">Status Algoritma:</span>
+                      <strong className={`status-highlight ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.watch_status}</strong>
+                    </div>
+                    <ul className="info-bullet-list">
+                      <li><b>Kondisi Pasar:</b> {c.watch_desc}</li>
+                      <li><b>Tekanan Beli (Minat Investor):</b> Menguasai {c.technicals.buying_pressure}% transaksi terbaru.</li>
+                      <li><b>Volatilitas Risiko:</b> Koin ini memiliki pergerakan harga rata-rata {c.technicals.volatility}% harian.</li>
+                      <li><b>Saran Modal Jaga-jaga:</b> {c.capital_advice}</li>
+                    </ul>
                   </div>
-                  <button className="execute-buy-button" onClick={() => handleBuy(c)}>⚡ Eksekusi Beli Sekarang</button>
+
+                  <button className="execute-buy-button watch-buy" onClick={() => openBuyModal(c)}>
+                    ⚡ Buat Form Order Pembelian Koin Ini
+                  </button>
                 </div>
               ))}
             </div>
@@ -273,24 +380,25 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 3: PORTOFOLIO AKTIF */}
+      {/* VIEW PANEL 3: PORTFOLIO */}
       {activeTab === "portfolio" && (
         <section className="view-section">
           {portfolio.length === 0 ? (
-            <div className="empty-placeholder">Belum ada posisi trading yang terbuka di database Anda.</div>
+            <div className="empty-placeholder">Buku portofolio Anda kosong. Silakan masuk ke pasar.</div>
           ) : (
             <div className="portfolio-vertical-stack">
               {portfolio.map((p) => (
                 <div key={p.id} className="portfolio-row-item">
-                  <div>
+                  <div className="port-left-section">
                     <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
-                    <span className="time-subtext">Tanggal Beli: {new Date(p.created_at).toLocaleString('id-ID')}</span>
+                    <span className="time-subtext">Terbuka: {new Date(p.created_at).toLocaleString('id-ID')}</span>
+                    <span className="modal-info-subtext">Modal: Rp {p.initial_capital?.toLocaleString() || "100.000"}</span>
                   </div>
 
                   <div className="prices-summary-grid">
-                    <div><span>Harga Beli</span><b>{p.entry_price?.toLocaleString()}</b></div>
-                    <div><span>Batas SL</span><b className="text-red">{p.target_sl?.toLocaleString()}</b></div>
-                    <div><span>Sasaran TP</span><b className="text-green">{p.target_tp?.toLocaleString()}</b></div>
+                    <div><span>Harga Beli (Entry)</span><b>{p.entry_price?.toLocaleString()}</b></div>
+                    <div><span>Batas SL (Otomatis)</span><b className="text-red">{p.target_sl?.toLocaleString()}</b></div>
+                    <div><span>Sasaran TP (Otomatis)</span><b className="text-green">{p.target_tp?.toLocaleString()}</b></div>
                   </div>
 
                   <div className="pnl-showcase">
@@ -301,7 +409,7 @@ export default function Page() {
                   </div>
 
                   <button className="close-position-btn" onClick={() => handleSell(p.id, p.pair)} disabled={loadingAction === `sell_${p.id}`}>
-                    {loadingAction === `sell_${p.id}` ? "Menutup..." : "Tutup Posisi"}
+                    {loadingAction === `sell_${p.id}` ? "Memproses..." : "Tutup Posisi (Jual)"}
                   </button>
                 </div>
               ))}
@@ -324,7 +432,7 @@ export default function Page() {
         .text-red { color: var(--theme-red) !important; }
         .text-white { color: #ffffff !important; }
 
-        .trading-terminal { padding: 25px; max-width: 1400px; margin: 0 auto; }
+        .trading-terminal { padding: 25px; max-width: 1400px; margin: 0 auto; position: relative; }
         .main-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 20px; margin-bottom: 20px; }
         .main-header h1 { font-size: 22px; font-weight: 800; color: var(--theme-blue); letter-spacing: 0.5px; }
         .main-header p { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
@@ -332,6 +440,40 @@ export default function Page() {
         .status-badge { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; background: rgba(255,255,255,0.03); padding: 6px 14px; border-radius: 20px; border: 1px solid var(--border-color); }
         .status-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--theme-red); }
         .status-badge.active .dot { background: var(--theme-green); box-shadow: 0 0 8px var(--theme-green); }
+
+        /* TOAST NOTIFICATION */
+        .toast-notification { position: fixed; top: 30px; right: 30px; background: var(--bg-card); border-left: 4px solid var(--theme-blue); box-shadow: 0 10px 30px rgba(0,0,0,0.5); padding: 16px 20px; border-radius: 8px; display: flex; align-items: center; gap: 12px; z-index: 9999; transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); opacity: 0; }
+        .toast-notification.show { transform: translateX(0); opacity: 1; }
+        .toast-notification.success { border-left-color: var(--theme-green); }
+        .toast-notification.error { border-left-color: var(--theme-red); }
+        .toast-notification p { font-size: 14px; font-weight: 600; color: white; margin: 0; }
+        .toast-icon { font-size: 18px; }
+
+        /* BUY MODAL POPUP */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.75); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 9000; animation: fadeIn 0.2s; }
+        .modal-box { background: var(--bg-card); width: 100%; max-width: 450px; border-radius: 12px; border: 1px solid var(--border-color); box-shadow: 0 20px 50px rgba(0,0,0,0.5); overflow: hidden; }
+        .modal-header { padding: 18px 24px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #0f172a; }
+        .modal-header h2 { font-size: 18px; font-weight: 700; margin: 0; }
+        .btn-close-modal { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; transition: 0.2s; }
+        .btn-close-modal:hover { color: white; }
+        
+        .modal-body { padding: 24px; display: flex; flex-direction: column; gap: 18px; }
+        .input-group { display: flex; flex-direction: column; gap: 8px; }
+        .input-group label { font-size: 13px; font-weight: 600; color: var(--text-dim); }
+        .input-group input { background: var(--bg-inner-box); border: 1px solid var(--border-color); color: white; padding: 12px 14px; border-radius: 6px; font-size: 15px; font-weight: 600; outline: none; transition: 0.2s; }
+        .input-group input:focus { border-color: var(--theme-blue); box-shadow: 0 0 0 2px rgba(59,130,246,0.2); }
+        .input-hint { font-size: 11px; color: var(--text-dim); font-style: italic; }
+
+        .modal-info-panel { background: rgba(30,41,59,0.5); padding: 14px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); }
+        .modal-info-panel h4 { font-size: 12px; color: var(--text-dim); margin-bottom: 10px; }
+        .modal-info-panel ul { list-style: none; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+        .modal-info-panel ul li { display: flex; justify-content: space-between; }
+        
+        .modal-footer { padding: 18px 24px; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 12px; background: #0f172a; }
+        .btn-cancel { background: transparent; border: 1px solid var(--text-dim); color: var(--text-dim); padding: 10px 18px; border-radius: 6px; font-weight: 600; cursor: pointer; }
+        .btn-cancel:hover { background: rgba(255,255,255,0.05); color: white; }
+        .btn-confirm-buy { background: var(--theme-blue); border: none; color: white; padding: 10px 20px; border-radius: 6px; font-weight: 700; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 10px rgba(37,99,235,0.2); }
+        .btn-confirm-buy:hover { background: #2563eb; transform: translateY(-1px); }
 
         /* SENTIMEN BITCOIN */
         .btc-regime-card { background: var(--bg-card); border: 1px solid var(--border-color); padding: 20px; border-radius: 12px; margin-bottom: 25px; border-left: 5px solid #475569; }
@@ -357,11 +499,10 @@ export default function Page() {
         .filter-btn { background: #151f32; border: 1px solid var(--border-color); color: var(--text-dim); padding: 6px 12px; font-size: 12px; font-weight: 600; border-radius: 4px; cursor: pointer; }
         .filter-btn.active { background: rgba(59,130,246,0.15); border-color: var(--theme-blue); color: #fff; }
 
-        /* GRIDS & CARDS */
+        /* SCANNER GRIDS */
         .cards-responsive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
         .coin-card-wrapper { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; transition: 0.2s; }
         .coin-card-wrapper:hover { border-color: var(--theme-blue); transform: translateY(-2px); }
-        .coin-card-wrapper.watched-border { border-top: 4px solid var(--theme-purple); }
 
         .card-header-info { display: flex; justify-content: space-between; align-items: center; }
         .card-header-info h2 { font-size: 16px; font-weight: 700; color: white; }
@@ -382,14 +523,12 @@ export default function Page() {
         .price-pct-change.plus { color: var(--theme-green); }
         .price-pct-change.minus { color: var(--theme-red); }
 
-        /* STRUKTUR TARGET TP SL ENTRY */
         .matrix-target-box { display: flex; background: #080c16; border: 1px solid var(--border-color); padding: 10px; border-radius: 8px; margin-bottom: 12px; justify-content: space-between; text-align: center; }
         .matrix-cell { flex: 1; display: flex; flex-direction: column; gap: 4px; }
         .matrix-cell.border-sides { border-left: 1px solid var(--border-color); border-right: 1px solid var(--border-color); }
         .cell-title { font-size: 9px; color: var(--text-dim); font-weight: 700; letter-spacing: 0.3px; }
         .matrix-cell strong { font-size: 12px; font-weight: 700; }
 
-        /* EXTRA ANALYTICS */
         .extra-analytics-row { display: flex; gap: 8px; margin-bottom: 12px; }
         .analytic-chip { background: var(--bg-inner-box); padding: 5px 10px; border-radius: 6px; font-size: 11px; color: #e2e8f0; border: 1px solid rgba(255,255,255,0.02); }
         .analytic-chip.allocation { border-left: 3px solid var(--theme-blue); font-weight: 600; }
@@ -410,10 +549,40 @@ export default function Page() {
         .execute-buy-button:hover:not(:disabled) { background: #2563eb; }
         .execute-buy-button:disabled { background: #1e293b; color: #4b5563; cursor: not-allowed; }
 
+        /* WATCHLIST DETAILED VIEW */
+        .watchlist-list-view { display: flex; flex-direction: column; gap: 15px; }
+        .watchlist-detailed-card { background: var(--bg-card); border-left: 4px solid var(--theme-purple); border-radius: 12px; padding: 20px; border-top: 1px solid var(--border-color); border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+        .watch-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        .watch-title-group { display: flex; align-items: center; gap: 12px; }
+        .watch-title-group h2 { font-size: 18px; font-weight: 800; color: white; }
+        .remove-watch-btn { background: rgba(239,68,68,0.1); color: var(--theme-red); border: 1px solid rgba(239,68,68,0.2); padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
+        .remove-watch-btn:hover { background: var(--theme-red); color: white; }
+        
+        .watch-price-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+        .watch-price { font-size: 26px; font-weight: 800; color: white; }
+        
+        .watch-info-board { background: var(--bg-inner-box); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); }
+        .info-status-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .info-label { font-size: 13px; color: var(--text-dim); }
+        .status-highlight { font-size: 13px; font-weight: 800; padding: 4px 10px; border-radius: 4px; letter-spacing: 0.5px; }
+        .status-highlight.strong-buy { background: rgba(139, 92, 246, 0.2); color: #c4b5fd; }
+        .status-highlight.buy { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+        .status-highlight.hold { background: rgba(71, 85, 105, 0.5); color: #cbd5e1; }
+        .status-highlight.sell { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+
+        .info-bullet-list { list-style-type: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
+        .info-bullet-list li { position: relative; padding-left: 18px; font-size: 13px; color: #cbd5e1; line-height: 1.5; }
+        .info-bullet-list li::before { content: "•"; position: absolute; left: 0; top: 0; color: var(--theme-blue); font-size: 18px; line-height: 1; }
+        .info-bullet-list li b { color: white; }
+
+        .watch-buy { max-width: 350px; margin-top: 20px; }
+
         /* PORTFOLIO LISTS */
         .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
         .portfolio-row-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .port-left-section h3 { font-size: 18px; font-weight: 800; color: white; }
         .time-subtext { font-size: 11px; color: var(--text-dim); display: block; margin-top: 4px; }
+        .modal-info-subtext { font-size: 11px; font-weight: 600; color: #94a3b8; display: block; margin-top: 2px; }
         
         .prices-summary-grid { display: flex; gap: 25px; background: #080c16; padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border-color); }
         .prices-summary-grid div { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
@@ -425,9 +594,12 @@ export default function Page() {
         .pnl-showcase strong { font-size: 16px; font-weight: 800; }
 
         .close-position-btn { background: var(--theme-red); border: none; color: white; padding: 10px 16px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; transition: 0.2s; }
-        .close-position-btn:hover { background: #dc2626; }
+        .close-position-btn:hover:not(:disabled) { background: #dc2626; }
+        .close-position-btn:disabled { opacity: 0.5; cursor: not-allowed; }
         
         .loading-container-box, .empty-placeholder { background: var(--bg-card); border: 1px dashed var(--border-color); padding: 40px; text-align: center; border-radius: 12px; color: var(--text-dim); font-size: 13.5px; }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
       `}} />
     </div>
   );
