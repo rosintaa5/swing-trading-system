@@ -70,7 +70,7 @@ export default function Page() {
       isOpen: true,
       coin: coin,
       customEntry: coin.price.toString(),
-      capital: "100000"
+      capital: "10000000"
     });
   };
 
@@ -184,7 +184,7 @@ export default function Page() {
                   type="number" 
                   value={buyModal.capital} 
                   onChange={(e) => setBuyModal({...buyModal, capital: e.target.value})}
-                  placeholder="Misal: 100000"
+                  placeholder="Misal: 10000000"
                 />
               </div>
 
