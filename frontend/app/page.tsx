@@ -323,7 +323,7 @@ export default function Page() {
           <p><b>Analisis Makro:</b> {data.btc.news}</p>
         </div>
 
-        {/* RESTORED: SECTION LIVE NEWS STREAM */}
+        {/* SECTION LIVE NEWS STREAM */}
         {data.btc.newsList && data.btc.newsList.length > 0 && (
           <div className="btc-news-stream">
             <h4>📰 Live News & Analisis Jaringan</h4>
