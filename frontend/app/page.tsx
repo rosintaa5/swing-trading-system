@@ -41,8 +41,8 @@ export default function Page() {
     coin: null,
     customEntryRaw: "",
     customEntryDisplay: "",
-    capitalRaw: "10000000",
-    capitalDisplay: "10.000.000"
+    capitalRaw: "100000",
+    capitalDisplay: "100.000"
   });
 
   useEffect(() => {
@@ -101,8 +101,8 @@ export default function Page() {
       coin: coin,
       customEntryRaw: coin.price.toString(),
       customEntryDisplay: coin.price.toString(),
-      capitalRaw: "10000000",
-      capitalDisplay: "10.000.000"
+      capitalRaw: "100000",
+      capitalDisplay: "100.000"
     });
   };
 
@@ -234,13 +234,18 @@ export default function Page() {
 
   const displayedCoins = signalFilter === "ALL" 
     ? data.top 
-    : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY");
+    : data.top.filter(c => c.signal === "BUY" || c.signal === "STRONG BUY" || c.signal === "🔥 WHALE SNIPER");
 
   const topNominations = data.top.slice(0, 3);
 
+  // Helper untuk merapikan nama kelas CSS dari sinyal yang ada emoji nya
+  const getSignalClass = (signalName: string) => {
+      if(signalName.includes('WHALE')) return 'whale-sniper';
+      return signalName.toLowerCase().replace(" ", "-");
+  };
+
   return (
     <div className="trading-terminal">
-      {/* ELEMEN CUSTOM TOAST */}
       <div className={`toast-notification ${toast.show ? 'show' : ''} ${toast.type}`}>
         <span className="toast-icon">
           {toast.type === 'success' ? '✅' : toast.type === 'error' ? '❌' : 'ℹ️'}
@@ -248,7 +253,6 @@ export default function Page() {
         <p>{toast.msg}</p>
       </div>
 
-      {/* ELEMEN BUY MODAL FORM POPUP */}
       {buyModal.isOpen && buyModal.coin && (
         <div className="modal-overlay">
           <div className="modal-box">
@@ -266,7 +270,7 @@ export default function Page() {
                     type="text" 
                     value={buyModal.capitalDisplay} 
                     onChange={handleCapitalChange}
-                    placeholder="10.000.000"
+                    placeholder="100.000"
                   />
                 </div>
               </div>
@@ -285,7 +289,7 @@ export default function Page() {
               <div className="modal-info-panel">
                 <h4>Simulasi Kalkulasi Mode Agresif (ATR Ketat):</h4>
                 <ul>
-                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.7)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * (buyModal.coin.signal === "🔥 WHALE SNIPER" ? 0.8 : 0.7))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
                   <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.4)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
                 </ul>
               </div>
@@ -309,7 +313,6 @@ export default function Page() {
         </div>
       </header>
 
-      {/* PANEL SENTIMEN BITCOIN BESERTA LIVE NEWS - SELALU TERLIHAT DI ATAS TAB */}
       <div className={`btc-regime-card ${data.btc.bias.toLowerCase()} dash-btc`}>
         <div className="btc-info-row">
           <div>
@@ -324,7 +327,6 @@ export default function Page() {
           <p><b>Analisis Makro:</b> {data.btc.news}</p>
         </div>
 
-        {/* SECTION LIVE NEWS STREAM */}
         {data.btc.newsList && data.btc.newsList.length > 0 && (
           <div className="btc-news-stream">
             <h4>📰 Live News & Analisis Jaringan</h4>
@@ -341,7 +343,6 @@ export default function Page() {
         )}
       </div>
 
-      {/* PENGALIHAN NAVIGASI & FILTER */}
       <div className="control-bar">
         <nav className="tab-nav">
           <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
@@ -359,10 +360,8 @@ export default function Page() {
         )}
       </div>
 
-      {/* VIEW PANEL 0: PUSAT INTELIJEN (DASHBOARD) */}
       {activeTab === "dashboard" && (
         <section className="view-section dashboard-grid">
-          {/* KOLOM KIRI: Kesehatan & Alerts */}
           <div className="dash-col-left">
             <div className="market-health-card">
               <h3>📊 Rasio Kesehatan Altcoin Saat Ini</h3>
@@ -406,20 +405,19 @@ export default function Page() {
             )}
           </div>
 
-          {/* KOLOM KANAN: Top 3 Rekomendasi */}
           <div className="dash-col-right">
             <div className="top-nominations-board">
               <h3>🏆 Top 3 Nominasi Pembelian Terbaik</h3>
-              <p>Disortir berdasarkan Skor Keyakinan (Confidence Score) tertinggi oleh algoritma sentimen dan momentum saat ini.</p>
+              <p>Disortir berdasarkan Skor Keyakinan (Confidence Score) dan aliran dana Paus (Whale) saat ini.</p>
               
               <div className="top-coins-list">
                 {topNominations.map((c: any, index: number) => (
-                  <div key={`top-${c.pair}`} className="top-coin-item">
+                  <div key={`top-${c.pair}`} className={`top-coin-item ${c.signal.includes('WHALE') ? 'whale-highlight' : ''}`}>
                     <div className="top-rank-badge">#{index + 1}</div>
                     <div className="top-coin-details">
                       <div className="top-header">
                         <h4>{c.pair.replace("_", "/").toUpperCase()}</h4>
-                        <span className={`signal-label ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.signal}</span>
+                        <span className={`signal-label ${getSignalClass(c.signal)}`}>{c.signal}</span>
                       </div>
                       <div className="top-price-row">
                         <span className="current-price-num">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</span>
@@ -443,7 +441,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 1: SCANNER */}
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
@@ -451,14 +448,14 @@ export default function Page() {
           ) : (
             <div className="cards-responsive-grid">
               {displayedCoins.map((c: any) => (
-                <div key={c.pair} className="coin-card-wrapper">
+                <div key={c.pair} className={`coin-card-wrapper ${c.signal.includes('WHALE') ? 'whale-border' : ''}`}>
                   <div className="card-header-info">
                     <h2>{c.pair.replace("_", " / ").toUpperCase()}</h2>
                     <div className="badge-row">
                       <button className={`watchlist-star ${c.isWatched ? 'active' : ''}`} onClick={() => toggleWatchlist(c.pair, c.isWatched)}>
                         {c.isWatched ? "★ Dipantau" : "☆ Pantau"}
                       </button>
-                      <span className={`signal-label ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.signal}</span>
+                      <span className={`signal-label ${getSignalClass(c.signal)}`}>{c.signal}</span>
                     </div>
                   </div>
 
@@ -514,7 +511,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 2: WATCHLIST */}
       {activeTab === "watchlist" && (
         <section className="view-section">
           {data.watchlist.length === 0 ? (
@@ -526,7 +522,7 @@ export default function Page() {
                   <div className="watch-header">
                     <div className="watch-title-group">
                       <h2>{c.pair.replace("_", " / ").toUpperCase()}</h2>
-                      <span className={`signal-label ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.signal}</span>
+                      <span className={`signal-label ${getSignalClass(c.signal)}`}>{c.signal}</span>
                     </div>
                     <button className="remove-watch-btn" onClick={() => toggleWatchlist(c.pair, true)}>✕ Hapus</button>
                   </div>
@@ -541,7 +537,7 @@ export default function Page() {
                   <div className="watch-info-board">
                     <div className="info-status-bar">
                       <span className="info-label">Status Algoritma:</span>
-                      <strong className={`status-highlight ${c.signal.toLowerCase().replace(" ", "-")}`}>{c.watch_status}</strong>
+                      <strong className={`status-highlight ${getSignalClass(c.signal)}`}>{c.watch_status}</strong>
                     </div>
                     <ul className="info-bullet-list">
                       <li><b>Analisis Mesin:</b> {c.news_headline}</li>
@@ -562,7 +558,6 @@ export default function Page() {
         </section>
       )}
 
-      {/* VIEW PANEL 3: PORTFOLIO */}
       {activeTab === "portfolio" && (
         <section className="view-section">
           <div className="portfolio-global-dashboard">
@@ -707,6 +702,10 @@ export default function Page() {
         .cards-responsive-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
         .coin-card-wrapper { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; transition: 0.2s; }
         .coin-card-wrapper:hover { border-color: var(--theme-blue); transform: translateY(-2px); }
+        
+        /* 🔥 STYLE SPESIAL UNTUK WHALE SNIPER */
+        .whale-border { border-color: #f59e0b; box-shadow: 0 0 20px rgba(245, 158, 11, 0.1); }
+        .top-coin-item.whale-highlight { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
 
         .card-header-info { display: flex; justify-content: space-between; align-items: center; }
         .card-header-info h2 { font-size: 16px; font-weight: 700; color: white; }
@@ -720,6 +719,13 @@ export default function Page() {
         .signal-label.buy { background: var(--theme-green); color: white; }
         .signal-label.hold { background: #4b5563; color: white; }
         .signal-label.sell { background: var(--theme-red); color: white; }
+        .signal-label.whale-sniper { background: #f59e0b; color: #78350f; border: 1px solid #fcd34d; animation: pulse 1.5s infinite; }
+
+        @keyframes pulse {
+          0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4); }
+          70% { box-shadow: 0 0 0 6px rgba(245, 158, 11, 0); }
+          100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+        }
 
         .price-display-block { display: flex; align-items: baseline; gap: 10px; margin: 12px 0; }
         .current-price-num { font-size: 24px; font-weight: 800; color: white; }
@@ -773,6 +779,7 @@ export default function Page() {
         .status-highlight.buy { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
         .status-highlight.hold { background: rgba(71, 85, 105, 0.5); color: #cbd5e1; }
         .status-highlight.sell { background: rgba(239, 68, 68, 0.2); color: #fca5a5; }
+        .status-highlight.whale-sniper { background: rgba(245, 158, 11, 0.2); color: #fcd34d; }
 
         .info-bullet-list { list-style-type: none; padding-left: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; }
         .info-bullet-list li { position: relative; padding-left: 18px; font-size: 13px; color: #cbd5e1; line-height: 1.5; }
