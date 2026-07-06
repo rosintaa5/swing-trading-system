@@ -158,11 +158,12 @@ export default function Page() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id })
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Gagal menutup transaksi jaringan.");
       await syncPortfolioManual();
       showToast(`Posisi ${pairName.toUpperCase()} berhasil direalisasikan.`, "success");
-    } catch (e) {
-      showToast("Gagal menutup transaksi jaringan.", "error");
+    } catch (e: any) {
+      showToast(e.message, "error");
     } finally {
       setLoadingAction(null);
     }
