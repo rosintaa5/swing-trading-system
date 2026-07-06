@@ -282,10 +282,10 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>Simulasi Kalkulasi Keamanan (ATR Berdasarkan Entry Anda):</h4>
+                <h4>Simulasi Kalkulasi Mode Agresif (ATR Ketat):</h4>
                 <ul>
-                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 1.5)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
-                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 1.0)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.7)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.4)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
                 </ul>
               </div>
             </div>
