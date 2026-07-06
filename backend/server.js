@@ -16,7 +16,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.a
 // 🤖 KONFIGURASI BOT AUTO-PILOT (AGRESIF) 🤖
 // =========================================================================
 const AUTO_TRADE_ENABLED = true; // Ubah ke 'false' jika ingin manual saja
-const CAPITAL_PER_TRADE = 100000; // Modal otomatis per koin (contoh: Rp 20.000)
+const CAPITAL_PER_TRADE = 100000; // Modal otomatis per koin (contoh: Rp 100.000)
 // =========================================================================
 
 // Middleware & Security CORS
@@ -162,7 +162,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
 // --- GLOBAL MARKET INTELLIGENCE (BTC TRACKER) ---
 async function updateMarket() {
   const now = Date.now();
-  if (now - cache.lastUpdate < 5000 || cache.isFetching) return; // Dipercepat 5 detik!
+  if (now - cache.lastUpdate < 5000 || cache.isFetching) return; 
 
   cache.isFetching = true;
   try {
@@ -519,10 +519,14 @@ async function streamWorker() {
   }
 }
 
+// 🚀 Panggil fungsi secara instan saat server baru menyala (tanpa nunggu 5 detik)
+streamWorker(); 
+
 // DIPERCEPAT MENJADI 5 DETIK! (Mode Agresif)
 setInterval(streamWorker, 5000);
 
 io.on("connection", (socket) => {
+  // Kirim data terakhir yang ada di memori langsung ke user yang baru masuk
   socket.emit("market_data", latestMarketData);
 });
 
