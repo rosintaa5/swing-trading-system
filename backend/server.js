@@ -99,47 +99,66 @@ let latestMarketData = {
 
 let isExecutingTrade = {}; 
 
-// --- FUNGSI CEK SALDO IDR INDODAX SECARA LIVE ---
-async function getIndodaxBalance() {
+// --- FUNGSI BARU: CEK SALDO KOIN / IDR INDODAX SECARA LIVE ---
+// Berguna untuk melihat dompet IDR, juga melihat dompet Altcoin sebelum dijual
+async function getIndodaxCoinBalance(coinName = 'idr') {
   const apiKey = process.env.INDODAX_API_KEY;
   const secretKey = process.env.INDODAX_SECRET_KEY;
-  if (!apiKey || !secretKey) return 0;
+  if (!apiKey || !secretKey) throw new Error("API/Secret Key belum disetel");
 
   const data = { method: 'getInfo', timestamp: Date.now() };
   const postData = querystring.stringify(data);
   const signature = crypto.createHmac('sha512', secretKey).update(postData).digest('hex');
 
-  try {
-    const response = await axios.post('https://indodax.com/tapi', postData, {
-      headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' },
-      timeout: 5000
-    });
-    if (response.data.success === 1) {
-      return parseFloat(response.data.return.balance.idr || 0);
-    }
-  } catch (error) {
-    console.error("⚠️ Gagal mengecek saldo Indodax:", error.message);
+  const response = await axios.post('https://indodax.com/tapi', postData, {
+    headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' },
+    timeout: 5000
+  });
+  
+  if (response.data.success === 1) {
+    return parseFloat(response.data.return.balance[coinName] || 0);
+  } else {
+    throw new Error(response.data.error);
   }
-  return 0;
 }
 
-// --- MESIN EKSEKUSI INDODAX PRIVATE API (SMART EXECUTION + FIX 8 DECIMALS) ---
+// --- MESIN EKSEKUSI INDODAX PRIVATE API (FULL PROTEKSI) ---
 async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
   const apiKey = process.env.INDODAX_API_KEY;
   const secretKey = process.env.INDODAX_SECRET_KEY;
   if (!apiKey || !secretKey) throw new Error("API/Secret Key belum diatur di .env");
 
+  const coinName = pair.split('_')[0];
+  let finalAmount = amount;
+
+  // 🧠 PROTEKSI 1: ANTI INSUFFICIENT BALANCE (Potongan Fee Beli Indodax)
+  // Sebelum jual, bot mengecek sisa keping koin asli di wallet, lalu menjual angka yang paling riil
+  if (type === 'sell' && !isRetry) {
+    try {
+      const realBalance = await getIndodaxCoinBalance(coinName);
+      if (realBalance < finalAmount) {
+         console.log(`⚠️ Saldo riil ${coinName} (${realBalance}) lebih kecil dari target (${finalAmount}) karena fee. Menyesuaikan otomatis agar sukses...`);
+         finalAmount = realBalance; // Kalibrasi ke saldo yang benar-benar tersedia
+      }
+      if (finalAmount <= 0) {
+         throw new Error(`Ditolak sistem: Saldo riil ${coinName} Anda di dompet kosong (0).`);
+      }
+    } catch(e) {
+      console.log(`Peringatan sinkronisasi saldo: ${e.message}`);
+      // Lanjut pakai finalAmount awal jika gagal cek API
+    }
+  }
+
   const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: price };
   
   if (type === 'buy') {
-    data['idr'] = amount; 
+    data['idr'] = finalAmount; 
   } else if (type === 'sell') {
-    // PROTEKSI MAKSIMAL 8 DESIMAL: Mencegah error "Amount fraction must be 8 digits or less"
-    // Gunakan Math.floor agar tidak membulatkan ke atas (menghindari error balance tidak cukup)
-    const safeAmount = Math.floor(amount * 100000000) / 100000000;
+    // 🧠 PROTEKSI 2: MAKSIMAL 8 DESIMAL (Mencegah "Amount fraction must be 8 digits")
+    const safeAmount = Math.floor(finalAmount * 100000000) / 100000000;
     
-    // Jika ini adalah tembakan ulang (retry untuk koin receh seperti DOGE), potong habis desimalnya.
-    data[pair.split('_')[0]] = isRetry ? Math.floor(amount) : safeAmount;
+    // 🧠 PROTEKSI 3: Koin Receh Dilarang Desimal (Mencegah "amount can't be in decimal")
+    data[coinName] = isRetry ? Math.floor(finalAmount) : safeAmount;
   }
 
   const postData = querystring.stringify(data);
@@ -156,10 +175,10 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
       throw new Error(`Ditolak Indodax: ${response.data.error}`);
     }
   } catch (error) {
-    // 🧠 SISTEM AUTO-RETRY ANTI-GAGAL PECAHAN KOIN RECEH
+    // Tembak ulang kalau Indodax menolak angka desimal pada DOGE/SHIB/dll
     if (!isRetry && type === 'sell' && error.message && error.message.includes("amount can't be in decimal")) {
-      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka dan menembak ulang...`);
-      return await executeIndodaxTrade(pair, type, price, amount, true); // Tembak ulang!
+      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka ke bawah dan menembak ulang...`);
+      return await executeIndodaxTrade(pair, type, price, amount, true); 
     }
     throw error;
   }
@@ -485,7 +504,13 @@ async function streamWorker() {
 
     // --- EVALUASI BOT 2: AUTO-BUY (Mengecek sisa saldo) ---
     if (AUTO_TRADE_ENABLED) {
-      const availableIDR = await getIndodaxBalance();
+      let availableIDR = 0;
+      try { 
+        availableIDR = await getIndodaxCoinBalance('idr'); 
+      } catch (e) {
+        // Abaikan jika API Indodax sibuk
+      }
+
       if (availableIDR >= CAPITAL_PER_TRADE) {
         const activePairs = openPositions.rows.map(p => p.pair);
         const bestCoin = results.find(r => r.signal === "STRONG BUY" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
