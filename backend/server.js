@@ -99,7 +99,7 @@ let latestMarketData = {
 
 let isExecutingTrade = {}; 
 
-// --- FUNGSI BARU: CEK SALDO IDR INDODAX SECARA LIVE ---
+// --- FUNGSI CEK SALDO IDR INDODAX SECARA LIVE ---
 async function getIndodaxBalance() {
   const apiKey = process.env.INDODAX_API_KEY;
   const secretKey = process.env.INDODAX_SECRET_KEY;
@@ -123,17 +123,23 @@ async function getIndodaxBalance() {
   return 0;
 }
 
-// --- MESIN EKSEKUSI INDODAX PRIVATE API (SMART EXECUTION & AUTO-RETRY) ---
+// --- MESIN EKSEKUSI INDODAX PRIVATE API (SMART EXECUTION + FIX 8 DECIMALS) ---
 async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
   const apiKey = process.env.INDODAX_API_KEY;
   const secretKey = process.env.INDODAX_SECRET_KEY;
   if (!apiKey || !secretKey) throw new Error("API/Secret Key belum diatur di .env");
 
   const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: price };
-  if (type === 'buy') data['idr'] = amount; 
-  else if (type === 'sell') {
-    // PROTEKSI: Jika ini adalah tembakan ulang (retry), potong habis desimalnya.
-    data[pair.split('_')[0]] = isRetry ? Math.floor(amount) : amount;
+  
+  if (type === 'buy') {
+    data['idr'] = amount; 
+  } else if (type === 'sell') {
+    // PROTEKSI MAKSIMAL 8 DESIMAL: Mencegah error "Amount fraction must be 8 digits or less"
+    // Gunakan Math.floor agar tidak membulatkan ke atas (menghindari error balance tidak cukup)
+    const safeAmount = Math.floor(amount * 100000000) / 100000000;
+    
+    // Jika ini adalah tembakan ulang (retry untuk koin receh seperti DOGE), potong habis desimalnya.
+    data[pair.split('_')[0]] = isRetry ? Math.floor(amount) : safeAmount;
   }
 
   const postData = querystring.stringify(data);
@@ -150,7 +156,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
       throw new Error(`Ditolak Indodax: ${response.data.error}`);
     }
   } catch (error) {
-    // 🧠 SISTEM AUTO-RETRY ANTI-GAGAL
+    // 🧠 SISTEM AUTO-RETRY ANTI-GAGAL PECAHAN KOIN RECEH
     if (!isRetry && type === 'sell' && error.message && error.message.includes("amount can't be in decimal")) {
       console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka dan menembak ulang...`);
       return await executeIndodaxTrade(pair, type, price, amount, true); // Tembak ulang!
@@ -220,12 +226,12 @@ function analyzeCoin(t, pairName, btcBias) {
   if (volatility <= 0) volatility = 0.5;
   const buying_pressure = ((price - low) / (high - low)) * 100;
 
-  // --- PERHITUNGAN SCALPING CEPAT (ATR Diperketat) ---
+  // --- PERHITUNGAN SCALPING CEPAT (ATR 0.7 TP / 0.4 SL) ---
   let dailyRange = high - low;
   if (dailyRange <= 0) dailyRange = price * 0.05;
 
-  const target_tp = price + (dailyRange * 0.7); // TP Sangat Cepat
-  const target_sl = Math.max(0.0001, price - (dailyRange * 0.4)); // SL Sangat Ketat
+  const target_tp = price + (dailyRange * 0.7); 
+  const target_sl = Math.max(0.0001, price - (dailyRange * 0.4)); 
   const rrr = ((target_tp - price) / (price - target_sl || 1)).toFixed(1);
 
   let btc_adjustment = btcBias === "BULLISH" ? 2 : btcBias === "BEARISH" ? -4 : 0;
@@ -292,7 +298,7 @@ app.get("/portfolio", async (req, res) => {
   }
 });
 
-// ROUTE BELI MANUAL (Dari UI)
+// ROUTE BELI MANUAL
 app.post("/buy", async (req, res) => {
   const { pair, entry_price, capital, high, low, news_headline, news_impact } = req.body;
   if (!pair || !entry_price || isNaN(entry_price) || !capital || isNaN(capital)) {
@@ -305,7 +311,6 @@ app.post("/buy", async (req, res) => {
     let dailyRange = numHigh - numLow;
     if (dailyRange <= 0) dailyRange = numEntry * 0.05;
 
-    // Rasio cepat terbaru
     const final_tp = numEntry + (dailyRange * 0.7);
     const final_sl = Math.max(0.0001, numEntry - (dailyRange * 0.4));
     const amount = capital / numEntry; 
@@ -326,7 +331,7 @@ app.post("/buy", async (req, res) => {
   }
 });
 
-// ROUTE JUAL MANUAL (Dari UI)
+// ROUTE JUAL MANUAL
 app.post("/sell", async (req, res) => {
   const { id } = req.body;
   try {
@@ -361,7 +366,7 @@ app.delete("/watchlist/:pair", async (req, res) => {
   } catch (err) { res.status(500).json({ error: "Gagal" }); }
 });
 
-// --- ENGINE LIVE SYNC BACKGROUND WORKER (CORE BOT ENGINE) ---
+// --- ENGINE LIVE SYNC BACKGROUND WORKER ---
 let isWorkerRunning = false;
 async function streamWorker() {
   if (isWorkerRunning) return;
@@ -403,7 +408,7 @@ async function streamWorker() {
     const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const portfolioData = [];
     
-    // --- EVALUASI BOT 1: CEK AUTO-SELL (TAKE PROFIT / STOP LOSS) & SMART HOLD ---
+    // --- EVALUASI BOT 1: AUTO-SELL & SMART HOLD ---
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
       let current_price = p.entry_price;
@@ -439,7 +444,6 @@ async function streamWorker() {
               let dailyRange = numHigh - numLow;
               if (dailyRange <= 0) dailyRange = current_price * 0.05;
 
-              // Trailing naik pelan-pelan
               const new_tp = current_price + (dailyRange * 0.7);
               const new_sl = current_price - (dailyRange * 0.4);
 
@@ -479,7 +483,7 @@ async function streamWorker() {
       portfolioData.push({ ...p, current_price, pnl, attention_needed, attention_reason });
     }
 
-    // --- EVALUASI BOT 2: CEK AUTO-BUY BERDASARKAN KETERSEDIAAN SALDO ---
+    // --- EVALUASI BOT 2: AUTO-BUY (Mengecek sisa saldo) ---
     if (AUTO_TRADE_ENABLED) {
       const availableIDR = await getIndodaxBalance();
       if (availableIDR >= CAPITAL_PER_TRADE) {
@@ -519,14 +523,13 @@ async function streamWorker() {
   }
 }
 
-// 🚀 Panggil fungsi secara instan saat server baru menyala (tanpa nunggu 5 detik)
-streamWorker(); 
+// Inisiasi Instan Saat Server Mulai
+streamWorker();
 
-// DIPERCEPAT MENJADI 5 DETIK! (Mode Agresif)
+// Loop 5 Detik Mode Agresif
 setInterval(streamWorker, 5000);
 
 io.on("connection", (socket) => {
-  // Kirim data terakhir yang ada di memori langsung ke user yang baru masuk
   socket.emit("market_data", latestMarketData);
 });
 
