@@ -586,7 +586,7 @@ export default function Page() {
                   </div>
 
                   <div className="prices-summary-grid">
-                    <div><span>Harga Saat Ini</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Harga Saat Karena Ini</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                     <div><span>Harga Entry</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                     <div><span>Batas SL (ATR)</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                     <div><span>Sasaran TP (ATR)</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
