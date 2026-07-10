@@ -238,7 +238,6 @@ export default function Page() {
 
   const topNominations = data.top.slice(0, 3);
 
-  // Helper untuk merapikan nama kelas CSS dari sinyal yang ada emoji nya
   const getSignalClass = (signalName: string) => {
       if(signalName.includes('WHALE')) return 'whale-sniper';
       return signalName.toLowerCase().replace(" ", "-");
@@ -287,10 +286,10 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>Simulasi Kalkulasi Mode Agresif (ATR Ketat):</h4>
+                <h4>Sistem Proteksi Anti-Bocor & Fee:</h4>
                 <ul>
-                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * (buyModal.coin.signal === "🔥 WHALE SNIPER" ? 0.8 : 0.7))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
-                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.4)).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(Math.max(parseFloat(buyModal.customEntryRaw) * 1.02, parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.75))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * (buyModal.coin.signal === "🔥 WHALE SNIPER" ? 0.6 : 0.4))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
                 </ul>
               </div>
             </div>
@@ -384,7 +383,7 @@ export default function Page() {
                         <strong>{item.pair.replace("_", "/").toUpperCase()}</strong>
                         <span className="alert-badge">{item.alertType.toUpperCase()}</span>
                       </div>
-                      <p className="alert-desc-text">{item.alertReason}</p>
+                        <p className="alert-desc-text">{item.alertReason}</p>
                       {item.alertProgress > 0 && (
                         <div className="mini-progress-bg mt-2">
                           <div className="mini-progress-fill" style={{ width: item.alertProgress + '%' }}></div>
@@ -444,7 +443,7 @@ export default function Page() {
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
-            <div className="loading-container-box">Sedang memindai dan menghitung pergerakan koin terbaik menggunakan ATR...</div>
+            <div className="loading-container-box">Sedang memindai dan menghitung pergerakan koin terbaik...</div>
           ) : (
             <div className="cards-responsive-grid">
               {displayedCoins.map((c: any) => (
@@ -468,15 +467,15 @@ export default function Page() {
 
                   <div className="matrix-target-box">
                     <div className="matrix-cell">
-                      <span className="cell-title">🛡️ BATAS SL (ATR)</span>
+                      <span className="cell-title">🛡️ BATAS SL</span>
                       <strong className="text-red">{c.target_sl.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                     <div className="matrix-cell border-sides">
-                      <span className="cell-title">🔑 ENTRY TERBAIK</span>
+                      <span className="cell-title">🔑 EST. ENTRY (ASK)</span>
                       <strong className="text-white">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                     <div className="matrix-cell">
-                      <span className="cell-title">🎯 TARGET TP (ATR)</span>
+                      <span className="cell-title">🎯 TARGET TP</span>
                       <strong className="text-green">{c.target_tp.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong>
                     </div>
                   </div>
@@ -543,7 +542,7 @@ export default function Page() {
                       <li><b>Analisis Mesin:</b> {c.news_headline}</li>
                       <li><b>Kondisi Makro:</b> {c.watch_desc}</li>
                       <li><b>Tekanan Beli:</b> Menguasai {c.technicals.buying_pressure}% transaksi.</li>
-                      <li><b>Volatilitas Risiko:</b> Koin ini memiliki pergerakan harga rata-rata {c.technicals.volatility}% harian (Tinggi/Rendah).</li>
+                      <li><b>Volatilitas Risiko:</b> Koin ini memiliki pergerakan harga rata-rata {c.technicals.volatility}% harian.</li>
                       <li><b>Saran Manajemen Dana:</b> {c.capital_advice}</li>
                     </ul>
                   </div>
@@ -566,7 +565,7 @@ export default function Page() {
               <strong className="metric-value text-white">Rp {totalModalActive.toLocaleString('id-ID')}</strong>
             </div>
             <div className="dashboard-metric-box highlight">
-              <span className="metric-title">Total Keuntungan / Kerugian (PnL)</span>
+              <span className="metric-title">Total Keuntungan Bersih (PnL Realita)</span>
               <strong className={`metric-value ${totalPnLActive >= 0 ? 'text-green' : 'text-red'}`}>
                 {totalPnLActive >= 0 ? '+' : ''}Rp {totalPnLActive.toLocaleString('id-ID', { maximumFractionDigits: 1 })}
               </strong>
@@ -586,14 +585,14 @@ export default function Page() {
                   </div>
 
                   <div className="prices-summary-grid">
-                    <div><span>Harga Saat Karena Ini</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Harga Entry</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Batas SL (ATR)</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Sasaran TP (ATR)</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Harga Pembeli (BID)</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Harga Entry Anda</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Batas SL Aman</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
+                    <div><span>Sasaran TP</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
                   </div>
 
                   <div className="pnl-showcase">
-                    <span>Keuntungan Berjalan (PnL)</span>
+                    <span>PnL Berjalan</span>
                     <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
                       {p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString('id-ID', { maximumFractionDigits: 1 })} IDR
                     </strong>
@@ -703,7 +702,6 @@ export default function Page() {
         .coin-card-wrapper { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; transition: 0.2s; }
         .coin-card-wrapper:hover { border-color: var(--theme-blue); transform: translateY(-2px); }
         
-        /* 🔥 STYLE SPESIAL UNTUK WHALE SNIPER */
         .whale-border { border-color: #f59e0b; box-shadow: 0 0 20px rgba(245, 158, 11, 0.1); }
         .top-coin-item.whale-highlight { border-color: #f59e0b; background: rgba(245,158,11,0.05); }
 
