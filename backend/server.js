@@ -16,7 +16,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.a
 // 🤖 KONFIGURASI BOT AUTO-PILOT (AGRESIF) 🤖
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 100000; 
+const CAPITAL_PER_TRADE = 500000; 
 // =========================================================================
 
 // Middleware & Security CORS
