@@ -13,13 +13,12 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🤖 KONFIGURASI BOT AUTO-PILOT (AGRESIF TAPI AMAN) 🤖
+// 🛡️ RECOVERY MODE: PERTAHANAN INSTITUSIONAL (ANTI-BOCOR) 🛡️
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 500000; 
+const CAPITAL_PER_TRADE = 100000; // Diturunkan ke 100rb untuk pemulihan bertahap
 // =========================================================================
 
-// Middleware & Security CORS
 app.use(cors({
   origin: FRONTEND_URL,
   methods: ["GET", "POST", "DELETE"],
@@ -37,7 +36,6 @@ const io = new Server(server, {
   transports: ["websocket", "polling"]
 });
 
-// Koneksi PostgreSQL Pool
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
@@ -50,7 +48,6 @@ pool.on('error', (err) => {
   console.error('⚠️ Koneksi Database bermasalah secara tidak terduga:', err);
 });
 
-// --- AUTO MIGRATION SYSTEM ---
 async function initDB() {
   try {
     await pool.query(`
@@ -161,7 +158,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
       headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000
     });
     if (response.data.success === 1) {
-      console.log(`✅ AUTO-TRADE: [${type.toUpperCase()}] ${pair} sukses dieksekusi di bursa!`);
+      console.log(`✅ AUTO-TRADE: [${type.toUpperCase()}]${pair} sukses dieksekusi di bursa!`);
       return response.data;
     } else {
       throw new Error(`Ditolak Indodax: ${response.data.error}`);
@@ -217,24 +214,22 @@ async function updateMarket() {
   }
 }
 
-// --- COIN ANALYZER ENGINE (OPTIMASI SPREAD & ANTI KEBOCORAN SALDO) ---
 function analyzeCoin(t, pairName, btcBias) {
   const price = parseFloat(t.last || 0);
-  const bidPrice = parseFloat(t.buy || price); // Harga untuk kita JUAL (SL/TP)
-  const askPrice = parseFloat(t.sell || price); // Harga untuk kita BELI (Entry)
+  const bidPrice = parseFloat(t.buy || price); 
+  const askPrice = parseFloat(t.sell || price); 
   const vol = parseFloat(t.vol_idr || 0);
   const high = parseFloat(t.high || price);
   const low = parseFloat(t.low || price);
   
   if (!price || vol < 150000000 || high === low) return null;
 
-  // 🛡️ PROTEKSI SPREAD MAKSIMAL 1.5% (Mencegah Kebocoran Saldo Akibat Selisih Harga Pasar)
+  // 🛡️ RECOVERY MODE: PROTEKSI SPREAD MAKSIMAL 1.0%
   const spread = ((askPrice - bidPrice) / bidPrice) * 100;
-  if (spread > 1.5) return null; 
+  if (spread > 1.0) return null; // Tolak koin jika selisih Bid/Ask terlalu besar
 
   const change = t.change ? parseFloat(t.change) : ((high - low) / (low || 1)) * 100;
   
-  // 🔥 WHALE SNIPER ALGORITHM (Volume Velocity 5-Sec)
   const prevVol = prevVolumeCache[pairName] || vol;
   const volVelocity = vol - prevVol;
   prevVolumeCache[pairName] = vol; 
@@ -254,11 +249,12 @@ function analyzeCoin(t, pairName, btcBias) {
       isWhaleSniper = true;
   }
 
-  // 🛡️ PROTEKSI GUNCANGAN (SL Diberi Ruang Lebih Lebar 0.6 untuk Whale, agar tidak kena gocekan awal)
+  // 🛡️ RECOVERY MODE: SL & TP ADJUSTMENTS
   const sl_multiplier = isWhaleSniper ? 0.6 : 0.4;
   let target_tp = askPrice + (dailyRange * 0.75); 
-  // Minimal profit harus 2% di atas entry untuk menutup fee Indodax
-  if (target_tp < askPrice * 1.02) target_tp = askPrice * 1.02; 
+  
+  // MINIMAL PROFIT 2.5% UNTUK MENUTUP FEE
+  if (target_tp < askPrice * 1.025) target_tp = askPrice * 1.025; 
   
   const target_sl = Math.max(0.0001, askPrice - (dailyRange * sl_multiplier)); 
 
@@ -301,7 +297,7 @@ function analyzeCoin(t, pairName, btcBias) {
   }
 
   return { 
-    price: askPrice, // Pastikan frontend menampilkan harga Ask sebagai estimasi Entry
+    price: askPrice, 
     high, low, vol, change, score, signal, news_headline, news_impact, capital_advice, rrr,
     watch_status, watch_desc,
     target_tp: parseFloat(target_tp.toFixed(4)),
@@ -310,13 +306,11 @@ function analyzeCoin(t, pairName, btcBias) {
   };
 }
 
-// --- API ENDPOINTS ---
 app.get("/portfolio", async (req, res) => {
   try {
     const result = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const rows = result.rows.map(p => {
       const t = cache.tickers[p.pair];
-      // Gunakan Bid untuk kalkulasi profit real karena kita menjual ke pembeli (bid)
       const current_bid = t ? parseFloat(t.buy || t.last) : p.entry_price;
       return { ...p, current_price: current_bid };
     });
@@ -339,8 +333,8 @@ app.post("/buy", async (req, res) => {
     if (dailyRange <= 0) dailyRange = numEntry * 0.05;
 
     let final_tp = numEntry + (dailyRange * 0.75);
-    if (final_tp < numEntry * 1.02) final_tp = numEntry * 1.02; // Min profit 2%
-    const final_sl = Math.max(0.0001, numEntry - (dailyRange * 0.5)); // Sedikit dilonggarkan
+    if (final_tp < numEntry * 1.025) final_tp = numEntry * 1.025; // Min profit 2.5%
+    const final_sl = Math.max(0.0001, numEntry - (dailyRange * 0.5)); 
     const amount = capital / numEntry; 
 
     if (capital < 10000) throw new Error("Modal minimum Indodax Rp 10.000.");
@@ -352,7 +346,7 @@ app.post("/buy", async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
       [pair, numEntry, amount, final_tp, final_sl, news_headline, news_impact, capital]
     );
-    res.json({ success: true, message: `Berhasil mengalokasikan Rp ${capital.toLocaleString('id-ID')} ke posisi ${pair.toUpperCase()}!` });
+    res.json({ success: true, message: `Berhasil mengalokasikan Rp ${capital.toLocaleString('id-ID')} ke posisi${pair.toUpperCase()}!` });
   } catch (err) {
     res.status(500).json({ error: `Gagal transaksi: ${err.message}` });
   }
@@ -446,7 +440,6 @@ async function streamWorker() {
       let attention_reason = "";
       
       if (t) {
-        // PERHATIAN: PnL Selalu dihitung berdasarkan harga pembeli (Bid Price) di lapangan!
         current_price = parseFloat(t.buy || t.last); 
         pnl = (current_price - p.entry_price) * p.amount;
         pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
@@ -467,13 +460,13 @@ async function streamWorker() {
 
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
           
-          // 🛡️ EARLY EXIT YANG AMAN: Jual hanya jika PnL > 1.5% dari modal awal (Nutup Fee Indodax)
-          const isProfitSafeFromFee = pnl > (p.initial_capital * 0.015);
+          // 🛡️ RECOVERY MODE EARLY EXIT: Jual hanya jika PnL > 2.0% dari modal awal
+          const isProfitSafeFromFee = pnl > (p.initial_capital * 0.02);
 
           if (isProfitSafeFromFee && analyzed && analyzed.technicals.buying_pressure < 30 && current_price < p.target_tp) {
             isExecutingTrade[`sell_${p.id}`] = true;
             try {
-              console.log(`🤖 EARLY EXIT TRIGGERED! Paus pergi, tapi untung sudah aman: ${p.pair}`);
+              console.log(`🤖 EARLY EXIT TRIGGERED! Mengamankan profit nyata: ${p.pair}`);
               await executeIndodaxTrade(p.pair, 'sell', current_price, p.amount);
               await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
             } catch (err) {
@@ -493,7 +486,7 @@ async function streamWorker() {
               const new_tp = current_price + (dailyRange * 0.75);
               let calculated_sl = current_price - (dailyRange * 0.4);
 
-              // KUNCI MODAL + 1.5% Profit (Zero Risk)
+              // 🛡️ RECOVERY MODE KUNCI MODAL + 1.5% Profit (Zero Risk)
               const risk_free_sl = p.entry_price * 1.015; 
               const new_sl = Math.max(p.target_sl, calculated_sl, risk_free_sl); // SL Tidak boleh turun
 
@@ -549,7 +542,7 @@ async function streamWorker() {
         if (bestCoin) {
           isExecutingTrade[`buy_${bestCoin.pair}`] = true;
           try {
-            console.log(`🤖 BOT AUTO-BUY TRIGGERED! Sniping ${bestCoin.pair} di harga Eksekusi ${bestCoin.price}...`);
+            console.log(`🤖 BOT AUTO-BUY TRIGGERED! Sniping ${bestCoin.pair} di harga Eksekusi${bestCoin.price}...`);
             const amount = CAPITAL_PER_TRADE / bestCoin.price;
 
             await executeIndodaxTrade(bestCoin.pair, 'buy', bestCoin.price, CAPITAL_PER_TRADE);
