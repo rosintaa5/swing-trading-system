@@ -286,10 +286,10 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>Sistem Proteksi Anti-Bocor & Fee:</h4>
+                <h4>🛡️ RECOVERY MODE (Sistem Proteksi Anti-Bocor & Fee):</h4>
                 <ul>
-                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(Math.max(parseFloat(buyModal.customEntryRaw) * 1.02, parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.75))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
-                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * (buyModal.coin.signal === "🔥 WHALE SNIPER" ? 0.6 : 0.4))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong></li>
+                  <li>Estimasi Target Profit (TP): <strong className="text-green">{(Math.max(parseFloat(buyModal.customEntryRaw) * 1.025, parseFloat(buyModal.customEntryRaw) + ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * 0.75))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong> <span className="input-hint">(Min. Profit 2.5%)</span></li>
+                  <li>Batas Stop Loss Maksimal (SL): <strong className="text-red">{(parseFloat(buyModal.customEntryRaw) - ((buyModal.coin.high - buyModal.coin.low || parseFloat(buyModal.customEntryRaw) * 0.05) * (buyModal.coin.signal === "🔥 WHALE SNIPER" ? 0.6 : 0.4))).toLocaleString('id-ID', { maximumFractionDigits: 4 })}</strong> <span className="input-hint">(Terkunci di +1.5% jika terbang)</span></li>
                 </ul>
               </div>
             </div>
@@ -682,8 +682,8 @@ export default function Page() {
         .news-list-items li { display: flex; align-items: baseline; gap: 10px; font-size: 12.5px; line-height: 1.4; color: #94a3b8; }
         .news-time { font-size: 11px; opacity: 0.7; font-family: monospace; }
         .news-impact-tag { font-size: 9px; font-weight: 800; padding: 2px 6px; border-radius: 4px; }
-        .news-impact-tag.bullish { background: rgba(16,185,129,0.1); color: var(--theme-green); }
-        .news-impact-tag.bearish { background: rgba(239,68,68,0.1); color: var(--theme-red); }
+        .news-impact-tag.bullish { background: rgba(16,185,129,0.15); color: var(--theme-green); }
+        .news-impact-tag.bearish { background: rgba(239,68,68,0.15); color: var(--theme-red); }
         .news-impact-tag.neutral { background: rgba(255,255,255,0.05); color: #94a3b8; }
         .news-title { color: #cbd5e1; }
 
