@@ -16,7 +16,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.a
 // 🛡️ RECOVERY MODE: PERTAHANAN INSTITUSIONAL (ANTI-BOCOR) 🛡️
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 100000; // Diturunkan ke 100rb untuk pemulihan bertahap
+const CAPITAL_PER_TRADE = 500000;
 // =========================================================================
 
 app.use(cors({
