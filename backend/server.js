@@ -13,10 +13,11 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ RECOVERY MODE: PERTAHANAN INSTITUSIONAL (ANTI-BOCOR) 🛡️
+// 🛡️ BUKU PINTAR V3: PERTAHANAN INSTITUSIONAL & SILENT WATCHER 🛡️
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 200000;
+const CAPITAL_PER_TRADE = 200000; // Eksekusi Rp 200.000 per peluru
+const MAX_CONCURRENT_POSITIONS = 5; // Maksimal 5 koin tertahan
 // =========================================================================
 
 app.use(cors({
@@ -58,7 +59,12 @@ async function initDB() {
         amount FLOAT DEFAULT 0,
         pnl FLOAT DEFAULT 0,
         status TEXT DEFAULT 'OPEN',
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMP DEFAULT NOW(),
+        target_tp FLOAT DEFAULT 0,
+        target_sl FLOAT DEFAULT 0,
+        news_headline TEXT,
+        news_impact TEXT,
+        initial_capital FLOAT DEFAULT 0
       );
     `);
     
@@ -69,13 +75,6 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-
-    await pool.query(`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS target_tp FLOAT DEFAULT 0;`);
-    await pool.query(`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS target_sl FLOAT DEFAULT 0;`);
-    await pool.query(`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS news_headline TEXT;`);
-    await pool.query(`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS news_impact TEXT;`);
-    await pool.query(`ALTER TABLE portfolio_positions ADD COLUMN IF NOT EXISTS initial_capital FLOAT DEFAULT 0;`);
-    
     console.log("✅ Database System & Auto-Migration Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
@@ -85,8 +84,10 @@ initDB();
 
 const BASE = "https://indodax.com/api";
 let cache = { tickers: {}, lastUpdate: 0, isFetching: false };
-let prevVolumeCache = {}; 
 
+// Memori Bot (SOP V3)
+let prevDataCache = {}; // { vol, ask } untuk hitung VPA
+let tickHistory = {}; // Simpan 12 tick terakhir (60 detik) untuk Micro-RSI
 let latestMarketData = {
   btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data...", newsList: [] },
   stats: { bullPct: 50, bearPct: 50, health: "NEUTRAL" },
@@ -134,7 +135,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
          finalAmount = realBalance; 
       }
       if (finalAmount <= 0) {
-         throw new Error(`Ditolak sistem: Saldo riil ${coinName} Anda di dompet kosong (0).`);
+         throw new Error(`Ditolak sistem: Saldo riil ${coinName} kosong.`);
       }
     } catch(e) {
       console.log(`Peringatan sinkronisasi saldo: ${e.message}`);
@@ -147,7 +148,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
     data['idr'] = finalAmount; 
   } else if (type === 'sell') {
     const safeAmount = Math.floor(finalAmount * 100000000) / 100000000;
-    data[coinName] = isRetry ? Math.floor(finalAmount) : safeAmount;
+    data[coinName] = isRetry ? Math.floor(finalAmount) : safeAmount; // Decimal Auto-Fix
   }
 
   const postData = querystring.stringify(data);
@@ -158,14 +159,14 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
       headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000
     });
     if (response.data.success === 1) {
-      console.log(`✅ AUTO-TRADE: [${type.toUpperCase()}]${pair} sukses dieksekusi di bursa!`);
+      console.log(`✅ INSTANT KILL/BUY: [${type.toUpperCase()}] ${pair} sukses dieksekusi di harga ${price}!`);
       return response.data;
     } else {
       throw new Error(`Ditolak Indodax: ${response.data.error}`);
     }
   } catch (error) {
     if (!isRetry && type === 'sell' && error.message && error.message.includes("amount can't be in decimal")) {
-      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka ke bawah dan menembak ulang...`);
+      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka ke bawah dan menembak ulang (Auto-Fix)...`);
       return await executeIndodaxTrade(pair, type, price, amount, true); 
     }
     throw error;
@@ -188,23 +189,16 @@ async function updateMarket() {
         const price = parseFloat(btc.last);
         const change = btc.change ? parseFloat(btc.change) : 0;
         let bias = "SIDEWAYS";
-        let news = "⚖️ Hati-hati, pergerakan BTC terpantau sideways/konsolidasi. Aliran dana condong masuk ke Altcoin potensial. Selektif memilih koin!";
+        let news = "⚖️ BTC Konsolidasi. Aliran dana condong masuk ke Altcoin.";
 
-        if (change <= -2.0) {
+        if (change <= -3.0) {
           bias = "BEARISH";
-          news = `⚠️ AWAS! BTC sedang ambruk (${change.toFixed(2)}%). Seluruh pasar berisiko terseret. Amankan profit atau ketatkan Stop Loss!`;
+          news = `⚠️ BADAI BTC! Bitcoin turun tajam (${change.toFixed(2)}%). Filter Anti-Badai aktif. Pembelian dihentikan.`;
         } else if (change >= 2.0) {
           bias = "BULLISH";
-          news = `🚀 LUAR BIASA! BTC terbang tinggi (${change.toFixed(2)}%). Tren pasar sangat sehat. Momentum terbaik untuk breakout koin pilihan!`;
+          news = `🚀 BTC BULLISH (${change.toFixed(2)}%). Momentum pasar sangat sehat untuk Sniper.`;
         }
-        
-        const newsList = [
-          { time: new Date().toLocaleTimeString('id-ID'), title: change >= 0 ? "Analisis Algoritma: Terjadi peningkatan aktivitas dompet institusi (Whale) di pasar Spot." : "Peringatan Makro: Arus keluar dana raksasa (Outflow) menekan batas support psikologis pasar.", impact: bias },
-          { time: new Date(Date.now() - 1200000).toLocaleTimeString('id-ID'), title: change > 3.0 ? "FOMO Retail mulai memuncak. Tetap waspada terhadap titik Overbought (Jenuh Beli)." : change < -3.0 ? "Kepanikan pasar (Panic Selling) memicu rentetan likuidasi massal di derivatif." : "Aliran dana perlahan berotasi dari Bitcoin menuju aset koin kapitalisasi menengah (Mid-Cap).", impact: bias === "SIDEWAYS" ? "NEUTRAL" : bias },
-          { time: new Date(Date.now() - 3600000).toLocaleTimeString('id-ID'), title: "Indikator volatilitas harian (ATR) global menunjukkan pasar berada dalam fase " + (Math.abs(change) > 2 ? "EKSPANSI." : "KONSOLIDASI (Merapat)."), impact: "NEUTRAL" }
-        ];
-
-        latestMarketData.btc = { price, change, bias, news, newsList };
+        latestMarketData.btc = { price, change, bias, news, newsList: [] };
       }
     }
   } catch (error) {
@@ -214,7 +208,10 @@ async function updateMarket() {
   }
 }
 
-function analyzeCoin(t, pairName, btcBias) {
+// =========================================================================
+// 🧮 RUMUS KALKULUS MIKRO & CEKLIS PERTAHANAN (SOP V3)
+// =========================================================================
+function analyzeCoin(t, pairName, btcChange) {
   const price = parseFloat(t.last || 0);
   const bidPrice = parseFloat(t.buy || price); 
   const askPrice = parseFloat(t.sell || price); 
@@ -222,87 +219,81 @@ function analyzeCoin(t, pairName, btcBias) {
   const high = parseFloat(t.high || price);
   const low = parseFloat(t.low || price);
   
-  if (!price || vol < 150000000 || high === low) return null;
+  if (!price || high === low) return null;
 
-  // 🛡️ RECOVERY MODE: PROTEKSI SPREAD MAKSIMAL 1.0%
+  // 1. Rumus Spread
   const spread = ((askPrice - bidPrice) / bidPrice) * 100;
-  if (spread > 1.0) return null; // Tolak koin jika selisih Bid/Ask terlalu besar
+  
+  // 2. Rumus VWAP (Pendekatan Harian)
+  const vwap = (high + low + askPrice) / 3;
+
+  // 3. Rumus Micro-RSI (1 Menit / 12 Tick x 5 Detik)
+  if (!tickHistory[pairName]) tickHistory[pairName] = [];
+  tickHistory[pairName].push(askPrice);
+  if (tickHistory[pairName].length > 12) tickHistory[pairName].shift();
+  
+  let gains = 0, losses = 0;
+  for(let i = 1; i < tickHistory[pairName].length; i++) {
+     let diff = tickHistory[pairName][i] - tickHistory[pairName][i-1];
+     if (diff > 0) gains += diff;
+     else losses -= diff;
+  }
+  let microRsi = 50; 
+  if (gains + losses > 0) {
+     microRsi = 100 - (100 / (1 + (gains / (losses === 0 ? 1 : losses))));
+  }
+
+  // 4. Rumus VPA (Volume-Price Accumulation)
+  const prevVol = prevDataCache[pairName]?.vol || vol;
+  const prevAsk = prevDataCache[pairName]?.ask || askPrice;
+  const vpa = (vol - prevVol) * (askPrice - prevAsk);
+  
+  // Simpan state untuk loop berikutnya
+  prevDataCache[pairName] = { vol, ask: askPrice }; 
 
   const change = t.change ? parseFloat(t.change) : ((high - low) / (low || 1)) * 100;
-  
-  const prevVol = prevVolumeCache[pairName] || vol;
-  const volVelocity = vol - prevVol;
-  prevVolumeCache[pairName] = vol; 
-
-  const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
-  const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
-  
-  let volatility = ((high - low) / low) * 100;
-  if (volatility <= 0) volatility = 0.5;
-  const buying_pressure = ((price - low) / (high - low)) * 100;
-
   let dailyRange = high - low;
   if (dailyRange <= 0) dailyRange = price * 0.05;
 
-  let isWhaleSniper = false;
-  if (volVelocity > 50000000 && change < 12 && change > 0) {
-      isWhaleSniper = true;
-  }
+  // 🛡️ CEKLIS PERTAHANAN (Filter Mutlak)
+  let rejectReason = null;
+  const maxRoomToBreathe = low + (0.8 * dailyRange); // 80% dari batas tertinggi
 
-  // 🛡️ RECOVERY MODE: SL & TP ADJUSTMENTS
-  const sl_multiplier = isWhaleSniper ? 0.6 : 0.4;
-  let target_tp = askPrice + (dailyRange * 0.75); 
-  
-  // MINIMAL PROFIT 2.5% UNTUK MENUTUP FEE
-  if (target_tp < askPrice * 1.025) target_tp = askPrice * 1.025; 
-  
-  const target_sl = Math.max(0.0001, askPrice - (dailyRange * sl_multiplier)); 
+  if (btcChange < -3.0) rejectReason = "Ditolak: Terkena Badai BTC (-3% Drop)";
+  else if (vol < 2000000000) rejectReason = "Ditolak: Koin Sepi (Vol < 2M IDR)";
+  else if (spread > 1.2) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`;
+  else if (askPrice < vwap) rejectReason = "Ditolak: Harga di Bawah Rata-Rata (VWAP)";
+  else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO";
+  else if (microRsi < 45 || microRsi > 72) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`;
+  else if (vpa <= 0) rejectReason = "Ditolak: VPA Negatif (Paus Sedang Distribusi/Buang Barang)";
 
-  let btc_adjustment = btcBias === "BULLISH" ? 2 : btcBias === "BEARISH" ? -4 : 0;
-  const score = (whale_score * 2) + momentum_score + btc_adjustment;
+  // Hitung Skor Momentum
+  const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
+  const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
+  let score = (whale_score * 2) + momentum_score;
   
-  let signal = score >= 17 ? "STRONG BUY" : score > 11 ? "BUY" : score < 6 ? "SELL" : "HOLD";
-  
-  if (isWhaleSniper) {
-      signal = "🔥 WHALE SNIPER";
-  }
-
+  // Virtual Target (Hanya dicatat bot, tidak di-push ke API)
+  let target_tp = askPrice * 1.03; // Base Target 3%
+  let target_sl = askPrice * 0.96; // Base Risk 4%
   const rrr = ((target_tp - askPrice) / (askPrice - target_sl || 1)).toFixed(1);
 
-  let news_headline = "Pergerakan harga wajar. Keseimbangan antara pembeli dan penjual cukup stabil.";
-  let news_impact = "NEUTRAL";
-  let capital_advice = "Gunakan maksimal 5% dari modal portofolio Anda.";
-  let watch_status = "TAHAN DULU (FASE KONSOLIDASI)";
-  let watch_desc = "Koin bergerak tanpa arah tren yang jelas. Belum ideal untuk masuk dalam waktu dekat.";
+  let signal = "HOLD";
+  let news_headline = rejectReason || "Koin bergerak wajar di bawah standar Sniper.";
+  let watch_status = "KONSOLIDASI";
 
-  if (isWhaleSniper) {
-    news_headline = "🐳 WHALE TERDETEKSI! Ledakan volume puluhan/ratusan juta rupiah masuk menghantam antrean jual secara diam-diam!";
-    news_impact = "BULLISH";
-    capital_advice = "🔥 ALL-IN / PRIORITAS! Ini adalah momentum letusan awal sebelum harga terbang.";
-    watch_status = "SIAP-SIAP TERBANG (EARLY PUMP)";
-    watch_desc = "Bandar institusional sedang mengakumulasi barang (Whale Sniper).";
-  } else if (btcBias === "BEARISH" && score < 10) {
-    news_headline = "🚨 TINGGALKAN SEKARANG! Koin ini terseret deras oleh ambruknya BTC.";
-    news_impact = "BEARISH";
-    signal = "SELL";
-    capital_advice = "Dilarang Masuk! Risiko Likuidasi Tinggi.";
-    watch_status = "HATI-HATI (RISIKO KOREKSI MASIF)";
-    watch_desc = "Sangat berbahaya untuk dibeli sekarang. Tren makro sedang menghancurkan batas support.";
-  } else if (score >= 17 && btcBias === "BULLISH") {
-    news_headline = "🚀 PELUANG EMAS! Tekanan beli koin ini meluap. Terdeteksi akumulasi paus.";
-    news_impact = "BULLISH";
-    capital_advice = "Sangat disarankan: Tambah Posisi Bertahap! (Alokasi 10-15% modal)";
-    watch_status = "SANGAT LAYAK ENTRY SEKARANG";
-    watch_desc = "Terjadi anomali akumulasi raksasa (Whale) dan penembusan harga atas.";
+  if (!rejectReason) {
+     signal = "🔥 WHALE SNIPER"; // Lulus Ceklis V3!
+     news_headline = "🎯 CEKLIS V3 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
+     watch_status = "SIAP DITEMBAK";
   }
 
   return { 
-    price: askPrice, 
-    high, low, vol, change, score, signal, news_headline, news_impact, capital_advice, rrr,
-    watch_status, watch_desc,
-    target_tp: parseFloat(target_tp.toFixed(4)),
-    target_sl: parseFloat(target_sl.toFixed(4)),
-    technicals: { buying_pressure: parseFloat(buying_pressure.toFixed(0)), volatility: parseFloat(volatility.toFixed(2)) }
+    price: askPrice, bid: bidPrice, high, low, vol, change, score, signal, 
+    news_headline, news_impact: rejectReason ? "NEUTRAL" : "BULLISH", 
+    capital_advice: signal === "🔥 WHALE SNIPER" ? "ALL-IN / SNIPER READY!" : "Jangan Masuk.", 
+    rrr, watch_status, watch_desc: rejectReason || "Memenuhi syarat Kalkulus Mikro.",
+    target_tp: parseFloat(target_tp.toFixed(4)), target_sl: parseFloat(target_sl.toFixed(4)),
+    technicals: { buying_pressure: parseFloat(microRsi.toFixed(0)), volatility: spread, vpa }
   };
 }
 
@@ -312,44 +303,33 @@ app.get("/portfolio", async (req, res) => {
     const rows = result.rows.map(p => {
       const t = cache.tickers[p.pair];
       const current_bid = t ? parseFloat(t.buy || t.last) : p.entry_price;
-      return { ...p, current_price: current_bid };
+      const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
+      return { ...p, current_price: current_bid, pnl_pct: livePnlPct };
     });
     res.json(rows);
   } catch (err) {
-    res.status(500).json({ error: "Gagal memuat daftar portofolio" });
+    res.status(500).json({ error: "Gagal memuat portofolio" });
   }
 });
 
+// Manual Execute Endpoints
 app.post("/buy", async (req, res) => {
   const { pair, entry_price, capital, high, low, news_headline, news_impact } = req.body;
-  if (!pair || !entry_price || isNaN(entry_price) || !capital || isNaN(capital)) {
-    return res.status(400).json({ error: "Gagal validasi: Data angka cacat atau kosong." });
-  }
   try {
-    const numEntry = parseFloat(entry_price);
-    const numHigh = parseFloat(high) || numEntry;
-    const numLow = parseFloat(low) || numEntry;
-    let dailyRange = numHigh - numLow;
-    if (dailyRange <= 0) dailyRange = numEntry * 0.05;
-
-    let final_tp = numEntry + (dailyRange * 0.75);
-    if (final_tp < numEntry * 1.025) final_tp = numEntry * 1.025; // Min profit 2.5%
-    const final_sl = Math.max(0.0001, numEntry - (dailyRange * 0.5)); 
-    const amount = capital / numEntry; 
-
-    if (capital < 10000) throw new Error("Modal minimum Indodax Rp 10.000.");
-
-    await executeIndodaxTrade(pair, 'buy', numEntry, capital);
+    const amount = capital / entry_price; 
+    await executeIndodaxTrade(pair, 'buy', entry_price, capital);
+    
+    // Virtual Target
+    let final_tp = entry_price * 1.03;
+    let final_sl = entry_price * 0.96;
 
     await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, initial_capital, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
-      [pair, numEntry, amount, final_tp, final_sl, news_headline, news_impact, capital]
+      [pair, entry_price, amount, final_tp, final_sl, news_headline, news_impact, capital]
     );
-    res.json({ success: true, message: `Berhasil mengalokasikan Rp ${capital.toLocaleString('id-ID')} ke posisi${pair.toUpperCase()}!` });
-  } catch (err) {
-    res.status(500).json({ error: `Gagal transaksi: ${err.message}` });
-  }
+    res.json({ success: true, message: `Beli Manual Sukses!` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post("/sell", async (req, res) => {
@@ -359,32 +339,31 @@ app.post("/sell", async (req, res) => {
     if (position.rows.length === 0) throw new Error("Posisi tidak ditemukan.");
     const p = position.rows[0];
     const t = cache.tickers[p.pair];
-    if (!t) throw new Error("Gagal mengambil harga terkini.");
     
     await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.buy || t.last), p.amount);
-
     await pool.query("UPDATE portfolio_positions SET status='CLOSED' WHERE id=$1", [id]);
-    res.json({ success: true, message: "Posisi berhasil ditutup dan Profit/Loss direalisasikan." });
-  } catch (err) {
-    res.status(500).json({ error: "Gagal mengeksekusi penutupan posisi: " + err.message });
-  }
+    res.json({ success: true, message: "Manual Kill Sukses." });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post("/watchlist", async (req, res) => {
   const { pair } = req.body;
   try {
     await pool.query("INSERT INTO watchlist (pair) VALUES ($1) ON CONFLICT DO NOTHING", [pair]);
-    res.json({ success: true, message: "Koin ditambahkan ke Radar." });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: "Gagal" }); }
 });
 
 app.delete("/watchlist/:pair", async (req, res) => {
   try {
     await pool.query("DELETE FROM watchlist WHERE pair = $1", [req.params.pair]);
-    res.json({ success: true, message: "Koin dihapus dari Radar." });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ error: "Gagal" }); }
 });
 
+// =========================================================================
+// 🚀 SILENT WATCHER LOOP (Berjalan tiap 5 detik)
+// =========================================================================
 let isWorkerRunning = false;
 async function streamWorker() {
   if (isWorkerRunning) return;
@@ -397,152 +376,93 @@ async function streamWorker() {
 
     const watchData = await pool.query("SELECT pair FROM watchlist");
     const watchPairs = watchData.rows.map(row => row.pair);
-
     const results = [];
-    let bullsCount = 0;
-    let bearsCount = 0;
+    
+    const btcChange = latestMarketData.btc.change;
 
     Object.keys(tickers).forEach((k) => {
       if (k === "btc_idr") return; 
-      const r = analyzeCoin(tickers[k], k, latestMarketData.btc.bias);
-      if (r) {
-        if (r.change >= 0) bullsCount++; else bearsCount++;
-        results.push({ pair: k, isWatched: watchPairs.includes(k), ...r });
-      }
+      const r = analyzeCoin(tickers[k], k, btcChange);
+      if (r) results.push({ pair: k, isWatched: watchPairs.includes(k), ...r });
     });
 
-    const totalCoins = bullsCount + bearsCount || 1;
-    const bullPct = Math.round((bullsCount / totalCoins) * 100);
-    const bearPct = Math.round((bearsCount / totalCoins) * 100);
-    let health = "KONSOLIDASI BERSAMA";
-    if (bullPct >= 65) health = "BULLISH (OPTIMIS TINGGI)";
-    else if (bullPct <= 35) health = "BEARISH (PESIMIS / TEKANAN JUAL)";
-    
-    latestMarketData.stats = { bullPct, bearPct, health };
-
-    const top = results.sort((a, b) => {
-      if (a.signal === "🔥 WHALE SNIPER" && b.signal !== "🔥 WHALE SNIPER") return -1;
-      if (b.signal === "🔥 WHALE SNIPER" && a.signal !== "🔥 WHALE SNIPER") return 1;
-      return b.score - a.score;
-    }).slice(0, 20);
-    
+    const top = results.sort((a, b) => b.score - a.score).slice(0, 20);
     const watchlistData = results.filter(r => watchPairs.includes(r.pair));
 
     const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const portfolioData = [];
     
-    // --- EVALUASI BOT 1: KUNCI PROFIT & ANTI GUNCANGAN ---
+    // --- EVALUASI BOT: VIRTUAL OCO, BREAK-EVEN LOCK, & TRAILING ---
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
-      let current_price = p.entry_price;
+      let current_bid = p.entry_price;
       let pnl = p.pnl;
       let attention_needed = false;
       let attention_reason = "";
       
       if (t) {
-        current_price = parseFloat(t.buy || t.last); 
-        pnl = (current_price - p.entry_price) * p.amount;
-        pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
-
-        const analyzed = results.find(r => r.pair === p.pair);
-        const buying_pressure = analyzed ? analyzed.technicals.buying_pressure : 50;
-        const volVelocity = prevVolumeCache[p.pair] ? (parseFloat(t.vol_idr || 0) - prevVolumeCache[p.pair]) : 0;
-
-        if (analyzed) {
-            if (analyzed.signal === "SELL") {
-                attention_needed = true;
-                attention_reason = "🚨 Sinyal berbalik drastis menjadi SELL. Waspada!";
-            } else if (analyzed.technicals.buying_pressure < 25) {
-                attention_needed = true;
-                attention_reason = "⚠️ Tekanan beli menyusut tajam (Dumping Murni).";
-            }
+        current_bid = parseFloat(t.buy || t.last); 
+        pnl = (current_bid - p.entry_price) * p.amount;
+        
+        // Live PnL Nyata (%)
+        const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
+        
+        // 🛡️ VIRTUAL TRAILING STOP & BREAK-EVEN LOCK (SOP V3)
+        let virtual_sl = p.target_sl;
+        
+        if (livePnlPct >= 2.0) {
+           const breakEvenLock = p.entry_price * 1.015; // Modal + Fee + Untung 1%
+           const trailingStop = current_bid * 0.98; // Jaga jarak 2% dari BID terkini
+           virtual_sl = Math.max(p.target_sl, breakEvenLock, trailingStop); // Pastikan SL hanya bisa naik
+           
+           if (virtual_sl > p.target_sl) {
+             console.log(`🔒 BREAK-EVEN / TRAILING AKTIF: ${p.pair} SL Naik ke ${virtual_sl}`);
+             await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2", [virtual_sl, p.id]);
+             p.target_sl = virtual_sl;
+             attention_needed = true;
+             attention_reason = `🚀 ZERO-RISK! Virtual SL terkunci di Area Profit (+${((virtual_sl - p.entry_price)/p.entry_price*100).toFixed(1)}%).`;
+           }
+        } else if (livePnlPct < 0) {
+           attention_needed = true;
+           attention_reason = "⚠️ Menahan posisi. Menunggu pantulan dari zona support.";
         }
 
+        pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
+
+        // 🔫 INSTANT KILL TRIGGER (Hanya hitungan memori, tidak di antrekan di Indodax)
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
-          
-          // 🛡️ RECOVERY MODE EARLY EXIT: Jual hanya jika PnL > 2.0% dari modal awal
-          const isProfitSafeFromFee = pnl > (p.initial_capital * 0.02);
-
-          if (isProfitSafeFromFee && analyzed && analyzed.technicals.buying_pressure < 30 && current_price < p.target_tp) {
+          if (current_bid <= p.target_sl || current_bid >= p.target_tp) {
             isExecutingTrade[`sell_${p.id}`] = true;
             try {
-              console.log(`🤖 EARLY EXIT TRIGGERED! Mengamankan profit nyata: ${p.pair}`);
-              await executeIndodaxTrade(p.pair, 'sell', current_price, p.amount);
+              console.log(`🤖 INSTANT KILL (VIRTUAL OCO) TRIGGERED untuk ${p.pair} di harga BID ${current_bid}`);
+              await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
               await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
             } catch (err) {
-              console.error(`Gagal Early Exit ${p.pair}:`, err.message);
-            } finally {
-              delete isExecutingTrade[`sell_${p.id}`];
-            }
-          }
-          // SMART HOLD / TRAILING STOP
-          else if (current_price >= p.target_tp) {
-            if (buying_pressure > 65 || volVelocity > 50000000) {
-              const numHigh = parseFloat(t.high) || current_price;
-              const numLow = parseFloat(t.low) || current_price;
-              let dailyRange = numHigh - numLow;
-              if (dailyRange <= 0) dailyRange = current_price * 0.05;
-
-              const new_tp = current_price + (dailyRange * 0.75);
-              let calculated_sl = current_price - (dailyRange * 0.4);
-
-              // 🛡️ RECOVERY MODE KUNCI MODAL + 1.5% Profit (Zero Risk)
-              const risk_free_sl = p.entry_price * 1.015; 
-              const new_sl = Math.max(p.target_sl, calculated_sl, risk_free_sl); // SL Tidak boleh turun
-
-              console.log(`🧠 SMART HOLD: ${p.pair} terus meroket! TP ditarik ke ${new_tp}, SL dikunci di profit area.`);
-              await pool.query("UPDATE portfolio_positions SET target_tp=$1, target_sl=$2 WHERE id=$3", [new_tp, new_sl, p.id]);
-              
-              p.target_tp = new_tp;
-              p.target_sl = new_sl;
-              attention_needed = true;
-              attention_reason = `🚀 SMART HOLD AKTIF! Target cuan dinaikkan!`;
-            } else {
-              isExecutingTrade[`sell_${p.id}`] = true;
-              try {
-                console.log(`🤖 BOT AUTO-SELL TRIGGERED! Take Profit murni 🎯 untuk ${p.pair}`);
-                await executeIndodaxTrade(p.pair, 'sell', current_price, p.amount);
-                await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
-              } catch (err) {
-                console.error(`Gagal Auto-Sell ${p.pair}:`, err.message);
-              } finally {
-                delete isExecutingTrade[`sell_${p.id}`];
-              }
-            }
-          } else if (current_price <= p.target_sl) {
-            isExecutingTrade[`sell_${p.id}`] = true;
-            try {
-              console.log(`🤖 BOT AUTO-SELL TRIGGERED! Cut Loss / Trailing Stop ⚠️ untuk ${p.pair}`);
-              await executeIndodaxTrade(p.pair, 'sell', current_price, p.amount);
-              await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
-            } catch (err) {
-              console.error(`Gagal Auto-Sell ${p.pair}:`, err.message);
+              console.error(`Gagal Instant Kill ${p.pair}:`, err.message);
             } finally {
               delete isExecutingTrade[`sell_${p.id}`];
             }
           }
         }
       }
-      portfolioData.push({ ...p, current_price, pnl, attention_needed, attention_reason });
+      portfolioData.push({ ...p, current_price: current_bid, pnl, pnl_pct: ((current_bid - p.entry_price) / p.entry_price) * 100, attention_needed, attention_reason });
     }
 
-    // --- EVALUASI BOT 2: AUTO-BUY ---
-    if (AUTO_TRADE_ENABLED) {
-      let availableIDR = 0;
-      try { availableIDR = await getIndodaxCoinBalance('idr'); } catch (e) {}
+    // --- EVALUASI BOT: AUTO-BUY (SILENT SNIPER) ---
+    if (AUTO_TRADE_ENABLED && openPositions.rowCount < MAX_CONCURRENT_POSITIONS) {
+      const activePairs = openPositions.rows.map(p => p.pair);
+      
+      // Tembak hanya koin yang lulus semua syarat (🔥 WHALE SNIPER)
+      const bestCoin = results.find(r => r.signal === "🔥 WHALE SNIPER" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
+      
+      if (bestCoin) {
+        let availableIDR = 0;
+        try { availableIDR = await getIndodaxCoinBalance('idr'); } catch (e) {}
 
-      if (availableIDR >= CAPITAL_PER_TRADE) {
-        const activePairs = openPositions.rows.map(p => p.pair);
-        
-        let bestCoin = results.find(r => r.signal === "🔥 WHALE SNIPER" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
-        if (!bestCoin) {
-            bestCoin = results.find(r => r.signal === "STRONG BUY" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
-        }
-        
-        if (bestCoin) {
+        if (availableIDR >= CAPITAL_PER_TRADE) {
           isExecutingTrade[`buy_${bestCoin.pair}`] = true;
           try {
-            console.log(`🤖 BOT AUTO-BUY TRIGGERED! Sniping ${bestCoin.pair} di harga Eksekusi${bestCoin.price}...`);
+            console.log(`🤖 SILENT SNIPER TRIGGERED! Menembak ${bestCoin.pair} di harga ASK Murni ${bestCoin.price}...`);
             const amount = CAPITAL_PER_TRADE / bestCoin.price;
 
             await executeIndodaxTrade(bestCoin.pair, 'buy', bestCoin.price, CAPITAL_PER_TRADE);
@@ -552,7 +472,7 @@ async function streamWorker() {
               [bestCoin.pair, bestCoin.price, amount, bestCoin.target_tp, bestCoin.target_sl, bestCoin.news_headline, bestCoin.news_impact, CAPITAL_PER_TRADE]
             );
           } catch (err) {
-            console.error(`Gagal Auto-Buy ${bestCoin.pair}:`, err.message);
+            console.error(`Gagal Sniper Beli ${bestCoin.pair}:`, err.message);
           } finally {
             delete isExecutingTrade[`buy_${bestCoin.pair}`];
           }
@@ -563,6 +483,14 @@ async function streamWorker() {
     latestMarketData.top = top;
     latestMarketData.portfolio = portfolioData;
     latestMarketData.watchlist = watchlistData;
+    
+    // Health Stats
+    const bullsCount = top.filter(c => c.change > 0).length;
+    latestMarketData.stats = { 
+      bullPct: Math.round((bullsCount / (top.length || 1)) * 100), 
+      bearPct: 100 - Math.round((bullsCount / (top.length || 1)) * 100), 
+      health: btcChange < -3.0 ? "BEARISH (BADAI BTC)" : "BULLISH (OPTIMIS TINGGI)" 
+    };
 
     io.emit("market_data", latestMarketData);
   } catch (e) {
@@ -579,4 +507,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE WHALE SNIPER ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3 (SILENT SNIPER) ONLINE - PORT ${PORT}`));
