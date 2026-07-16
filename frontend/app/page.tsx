@@ -309,7 +309,7 @@ export default function Page() {
           <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
           <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V3 ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Pantauan Manual ({data.watchlist.length})</button>
-          <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Virtual ({portfolio.length}/{MAX_CONCURRENT_POSITIONS})</button>
+          <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Virtual ({portfolio.length})</button>
         </nav>
 
         {activeTab === "scanner" && (
