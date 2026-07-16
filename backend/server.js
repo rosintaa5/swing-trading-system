@@ -17,7 +17,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.a
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 200000; // Eksekusi Rp 200.000 per peluru
-const MAX_CONCURRENT_POSITIONS = 5; // Maksimal 5 koin tertahan
+// Batasan maksimal koin telah dicabut. Bot menembak selama saldo cukup.
 // =========================================================================
 
 app.use(cors({
@@ -449,7 +449,8 @@ async function streamWorker() {
     }
 
     // --- EVALUASI BOT: AUTO-BUY (SILENT SNIPER) ---
-    if (AUTO_TRADE_ENABLED && openPositions.rowCount < MAX_CONCURRENT_POSITIONS) {
+    // Batasan maksimal koin dihapus, eksekusi dilakukan selama ada saldo cukup
+    if (AUTO_TRADE_ENABLED) {
       const activePairs = openPositions.rows.map(p => p.pair);
       
       // Tembak hanya koin yang lulus semua syarat (🔥 WHALE SNIPER)
