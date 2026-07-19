@@ -17,7 +17,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.a
 // Dilengkapi Presisi Mutlak, SQL Ganda, dan Anti-Bull Trap (Cooldown)
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 200000; // Eksekusi Rp 200.000 per peluru
+const CAPITAL_PER_TRADE = 500000; // Eksekusi Rp 200.000 per peluru
 // =========================================================================
 
 app.use(cors({
