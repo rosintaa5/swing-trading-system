@@ -85,6 +85,12 @@ export default function Page() {
     return val.replace(/[^0-9.]/g, ''); 
   };
 
+  // 🎯 PRESISI MUTLAK: Menampilkan harga asli hingga 10 desimal (Anti-Pembulatan)
+  const formatHargaMurni = (angka: number) => {
+    if (angka === undefined || angka === null) return "0";
+    return angka.toLocaleString("id-ID", { maximumFractionDigits: 10 });
+  };
+
   const handleCapitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const rawVal = e.target.value.replace(/[^0-9]/g, '');
     setBuyModal(prev => ({ ...prev, capitalRaw: rawVal, capitalDisplay: formatRupiah(rawVal) }));
@@ -257,7 +263,7 @@ export default function Page() {
                   type="text" 
                   value={buyModal.customEntryDisplay} 
                   onChange={handleEntryChange}
-                  placeholder={`Harga Pasar: ${buyModal.coin.price}`}
+                  placeholder={`Harga Pasar: ${formatHargaMurni(buyModal.coin.price)}`}
                 />
               </div>
 
@@ -281,8 +287,8 @@ export default function Page() {
 
       <header className="main-header">
         <div>
-          <h1>⚡ QUANT ENGINE V3: SILENT SNIPER</h1>
-          <p>Sistem Deteksi VPA, Micro-RSI, dan Virtual Execution (Indodax Compliant)</p>
+          <h1>⚡ QUANT ENGINE V3.1: SILENT SNIPER</h1>
+          <p>Sistem Presisi Mutlak, Micro-RSI, VPA, dan Virtual Execution (Indodax Compliant)</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
           <span className="dot"></span> {isConnected ? 'LIVE DATA STREAM' : 'OFFLINE SYNC'}
@@ -293,7 +299,7 @@ export default function Page() {
         <div className="btc-info-row">
           <div>
             <h3>FILTER MAKRO: BITCOIN (BTC/IDR)</h3>
-            <span className="btc-price-text">{data.btc.price ? `${data.btc.price.toLocaleString('id-ID')} IDR` : 'Memuat data...'}</span>
+            <span className="btc-price-text">{data.btc.price ? `Rp ${formatRupiah(data.btc.price.toString())}` : 'Memuat data...'}</span>
           </div>
           <span className={`btc-change-badge ${data.btc.change >= 0 ? 'bull' : 'bear'}`}>
             {data.btc.change >= 0 ? '▲' : '▼'} {data.btc.change?.toFixed(2)}%
@@ -380,7 +386,7 @@ export default function Page() {
                         <span className={`signal-label ${getSignalClass(c.signal)}`}>{c.signal}</span>
                       </div>
                       <div className="top-price-row">
-                        <span className="current-price-num">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</span>
+                        <span className="current-price-num">Rp {formatHargaMurni(c.price)}</span>
                       </div>
                       <div className="top-info-desc">
                         <p>Micro-RSI: <b>{c.technicals.buying_pressure}</b> | Spread: <b>{c.technicals.volatility.toFixed(2)}%</b></p>
@@ -420,7 +426,7 @@ export default function Page() {
                   </div>
 
                   <div className="price-display-block">
-                    <span className="current-price-num">{c.price.toLocaleString('id-ID', { maximumFractionDigits: 4 })} IDR</span>
+                    <span className="current-price-num">Rp {formatHargaMurni(c.price)}</span>
                     <span className={`price-pct-change ${c.change >= 0 ? 'plus' : 'minus'}`}>
                       {c.change >= 0 ? '↗' : '↘'} {c.change?.toFixed(2)}%
                     </span>
@@ -473,7 +479,7 @@ export default function Page() {
                   </div>
 
                   <div className="watch-price-row">
-                    <span className="watch-price">{c.price.toLocaleString('id-ID')} IDR</span>
+                    <span className="watch-price">Rp {formatHargaMurni(c.price)}</span>
                   </div>
 
                   <div className="watch-info-board">
@@ -517,36 +523,42 @@ export default function Page() {
             <div className="empty-placeholder">Buku portofolio bersih. Menunggu tembakan Sniper otomatis...</div>
           ) : (
             <div className="portfolio-vertical-stack">
-              {portfolio.map((p) => (
-                <div key={p.id} className="portfolio-row-item">
-                  <div className="port-left-section">
-                    <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
-                    <span className="time-subtext">Entry: {new Date(p.created_at).toLocaleString('id-ID')}</span>
-                    <span className="modal-info-subtext">Peluru: Rp {p.initial_capital?.toLocaleString('id-ID') || "0"}</span>
-                  </div>
+              {portfolio.map((p) => {
+                const isZeroRisk = p.target_sl >= p.entry_price;
+                return (
+                  <div key={p.id} className="portfolio-row-item" style={{ border: isZeroRisk ? '1px solid #f59e0b' : '1px solid var(--border-color)' }}>
+                    <div className="port-left-section">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
+                        {isZeroRisk && <span className="zero-risk-badge">🔒 ZERO RISK LOCK</span>}
+                      </div>
+                      <span className="time-subtext">Entry: {new Date(p.created_at).toLocaleString('id-ID')}</span>
+                      <span className="modal-info-subtext">Peluru: Rp {p.initial_capital?.toLocaleString('id-ID') || "0"}</span>
+                    </div>
 
-                  <div className="prices-summary-grid">
-                    <div><span>Harga Pembeli (BID)</span><b className="text-white">{p.current_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Harga Entry Anda</span><b>{p.entry_price?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Virtual SL (Database)</span><b className="text-red">{p.target_sl?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                    <div><span>Virtual TP (Database)</span><b className="text-green">{p.target_tp?.toLocaleString('id-ID', { maximumFractionDigits: 4 })}</b></div>
-                  </div>
+                    <div className="prices-summary-grid">
+                      <div><span>Harga Pembeli (BID)</span><b className="text-white">Rp {formatHargaMurni(p.current_price)}</b></div>
+                      <div><span>Harga Entry Anda</span><b>Rp {formatHargaMurni(p.entry_price)}</b></div>
+                      <div><span>Virtual SL (Database)</span><b className="text-red">Rp {formatHargaMurni(p.target_sl)}</b></div>
+                      <div><span>Virtual TP (Database)</span><b className="text-green">Rp {formatHargaMurni(p.target_tp)}</b></div>
+                    </div>
 
-                  <div className="pnl-showcase">
-                    <span>PnL Berjalan</span>
-                    <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
-                      {p.pnl_pct >= 0 ? "+" : ""}{p.pnl_pct?.toFixed(2)}%
-                    </strong>
-                    <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
-                      ({p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString('id-ID', { maximumFractionDigits: 1 })} IDR)
-                    </strong>
-                  </div>
+                    <div className="pnl-showcase">
+                      <span>PnL Berjalan</span>
+                      <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
+                        {p.pnl_pct >= 0 ? "+" : ""}{p.pnl_pct?.toFixed(2)}%
+                      </strong>
+                      <strong className={p.pnl >= 0 ? "text-green" : "text-red"}>
+                        ({p.pnl >= 0 ? "+" : ""}{p.pnl?.toLocaleString('id-ID', { maximumFractionDigits: 1 })} IDR)
+                      </strong>
+                    </div>
 
-                  <button className="close-position-btn" onClick={() => handleSell(p.id, p.pair)} disabled={loadingAction === `sell_${p.id}`}>
-                    {loadingAction === `sell_${p.id}` ? "Menembak Jual..." : "Instant Kill (Jual)"}
-                  </button>
-                </div>
-              ))}
+                    <button className="close-position-btn" onClick={() => handleSell(p.id, p.pair)} disabled={loadingAction === `sell_${p.id}`}>
+                      {loadingAction === `sell_${p.id}` ? "Menembak Jual..." : "Instant Kill (Jual)"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>
@@ -655,9 +667,9 @@ export default function Page() {
           100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
         }
 
-        .price-display-block { display: flex; align-items: baseline; gap: 10px; margin: 12px 0; }
+        .price-display-block { display: flex; align-items: baseline; gap: 10px; margin: 12px 0; font-family: monospace; }
         .current-price-num { font-size: 24px; font-weight: 800; color: white; }
-        .price-pct-change { font-size: 12px; font-weight: 700; }
+        .price-pct-change { font-size: 12px; font-weight: 700; font-family: sans-serif; }
         .price-pct-change.plus { color: var(--theme-green); }
         .price-pct-change.minus { color: var(--theme-red); }
 
@@ -687,7 +699,7 @@ export default function Page() {
         .remove-watch-btn { background: rgba(239,68,68,0.1); color: var(--theme-red); border: 1px solid rgba(239,68,68,0.2); padding: 5px 10px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
         .remove-watch-btn:hover { background: var(--theme-red); color: white; }
         
-        .watch-price-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+        .watch-price-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; font-family: monospace; }
         .watch-price { font-size: 26px; font-weight: 800; color: white; }
         
         .watch-info-board { background: var(--bg-inner-box); padding: 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.03); }
@@ -728,7 +740,7 @@ export default function Page() {
         .top-coin-details { flex: 1; }
         .top-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
         .top-header h4 { font-size: 16px; font-weight: 800; }
-        .top-price-row { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+        .top-price-row { display: flex; gap: 10px; align-items: baseline; margin-bottom: 8px; font-family: monospace; }
         .top-info-desc { font-size: 11px; color: #cbd5e1; line-height: 1.5; }
         .text-dim { color: var(--text-dim); font-style: italic; margin-top: 4px; }
 
@@ -761,14 +773,15 @@ export default function Page() {
         .alert-card.critical .mini-progress-fill { height: 100%; background: #f59e0b; }
 
         .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
-        .portfolio-row-item { background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .portfolio-row-item { background: var(--bg-card); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; transition: 0.3s; }
         .port-left-section h3 { font-size: 18px; font-weight: 800; color: white; }
         .time-subtext { font-size: 11px; color: var(--text-dim); display: block; margin-top: 4px; }
         .modal-info-subtext { font-size: 11px; font-weight: 600; color: #94a3b8; display: block; margin-top: 2px; }
+        .zero-risk-badge { background: #f59e0b; color: #78350f; font-size: 10px; font-weight: 800; padding: 3px 6px; border-radius: 4px; border: 1px solid #fcd34d; animation: pulse 2s infinite; }
         
-        .prices-summary-grid { display: flex; gap: 25px; background: #080c16; padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .prices-summary-grid { display: flex; gap: 25px; background: #080c16; padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border-color); font-family: monospace; }
         .prices-summary-grid div { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-        .prices-summary-grid span { color: var(--text-dim); }
+        .prices-summary-grid span { color: var(--text-dim); font-family: sans-serif; }
         .prices-summary-grid b { font-size: 13px; color: #94a3b8; }
 
         .pnl-showcase { text-align: right; min-width: 130px; }
