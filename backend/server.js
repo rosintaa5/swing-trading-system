@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V3: PERTAHANAN INSTITUSIONAL & SILENT WATCHER 🛡️
+// 🛡️ BUKU PINTAR V3.1 (FINAL): PERTAHANAN INSTITUSIONAL & SILENT WATCHER 
+// Dilengkapi Presisi Mutlak, SQL Ganda, dan Anti-Bull Trap (Cooldown)
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 200000; // Eksekusi Rp 200.000 per peluru
-// Batasan maksimal koin telah dicabut. Bot menembak selama saldo cukup.
 // =========================================================================
 
 app.use(cors({
@@ -86,8 +86,8 @@ const BASE = "https://indodax.com/api";
 let cache = { tickers: {}, lastUpdate: 0, isFetching: false };
 
 // Memori Bot (SOP V3)
-let prevDataCache = {}; // { vol, ask } untuk hitung VPA
-let tickHistory = {}; // Simpan 12 tick terakhir (60 detik) untuk Micro-RSI
+let prevDataCache = {}; 
+let tickHistory = {}; 
 let latestMarketData = {
   btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data...", newsList: [] },
   stats: { bullPct: 50, bearPct: 50, health: "NEUTRAL" },
@@ -97,6 +97,11 @@ let latestMarketData = {
 };
 
 let isExecutingTrade = {}; 
+
+// 🎯 FUNGSI PENCEGAH NOTASI ILMIAH & PEMBULATAN
+function exactNum(num) {
+  return Number(num).toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 10 });
+}
 
 async function getIndodaxCoinBalance(coinName = 'idr') {
   const apiKey = process.env.INDODAX_API_KEY;
@@ -142,13 +147,16 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
     }
   }
 
-  const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: price };
+  // HARGA TIDAK BOLEH DIBULATKAN SAMA SEKALI
+  const exactPrice = exactNum(price); 
+
+  const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: exactPrice };
   
   if (type === 'buy') {
-    data['idr'] = finalAmount; 
+    data['idr'] = exactNum(finalAmount); 
   } else if (type === 'sell') {
-    const safeAmount = Math.floor(finalAmount * 100000000) / 100000000;
-    data[coinName] = isRetry ? Math.floor(finalAmount) : safeAmount; // Decimal Auto-Fix
+    let safeAmount = isRetry ? Math.floor(finalAmount) : finalAmount;
+    data[coinName] = exactNum(safeAmount); 
   }
 
   const postData = querystring.stringify(data);
@@ -159,7 +167,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
       headers: { 'Key': apiKey, 'Sign': signature, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 10000
     });
     if (response.data.success === 1) {
-      console.log(`✅ INSTANT KILL/BUY: [${type.toUpperCase()}] ${pair} sukses dieksekusi di harga ${price}!`);
+      console.log(`✅ INSTANT KILL/BUY: [${type.toUpperCase()}] ${pair} sukses dieksekusi di harga Rp ${exactPrice}!`);
       return response.data;
     } else {
       throw new Error(`Ditolak Indodax: ${response.data.error}`);
@@ -341,7 +349,8 @@ app.post("/sell", async (req, res) => {
     const t = cache.tickers[p.pair];
     
     await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.buy || t.last), p.amount);
-    await pool.query("UPDATE portfolio_positions SET status='CLOSED' WHERE id=$1", [id]);
+    // Proteksi Ganda SQL pada Sell Manual
+    await pool.query("UPDATE portfolio_positions SET status='CLOSED_MANUAL' WHERE id=$1 AND pair=$2", [id, p.pair]);
     res.json({ success: true, message: "Manual Kill Sukses." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -407,7 +416,7 @@ async function streamWorker() {
         // Live PnL Nyata (%)
         const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
         
-        // 🛡️ VIRTUAL TRAILING STOP & BREAK-EVEN LOCK (SOP V3)
+        // 🛡️ VIRTUAL TRAILING STOP & BREAK-EVEN LOCK (SOP V3.1)
         let virtual_sl = p.target_sl;
         
         if (livePnlPct >= 2.0) {
@@ -416,8 +425,9 @@ async function streamWorker() {
            virtual_sl = Math.max(p.target_sl, breakEvenLock, trailingStop); // Pastikan SL hanya bisa naik
            
            if (virtual_sl > p.target_sl) {
-             console.log(`🔒 BREAK-EVEN / TRAILING AKTIF: ${p.pair} SL Naik ke ${virtual_sl}`);
-             await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2", [virtual_sl, p.id]);
+             console.log(`🔒 BREAK-EVEN / TRAILING AKTIF: ${p.pair} SL Naik ke ${exactNum(virtual_sl)}`);
+             // Proteksi SQL Ganda Lapis 1
+             await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2 AND pair=$3", [virtual_sl, p.id, p.pair]);
              p.target_sl = virtual_sl;
              attention_needed = true;
              attention_reason = `🚀 ZERO-RISK! Virtual SL terkunci di Area Profit (+${((virtual_sl - p.entry_price)/p.entry_price*100).toFixed(1)}%).`;
@@ -434,9 +444,12 @@ async function streamWorker() {
           if (current_bid <= p.target_sl || current_bid >= p.target_tp) {
             isExecutingTrade[`sell_${p.id}`] = true;
             try {
-              console.log(`🤖 INSTANT KILL (VIRTUAL OCO) TRIGGERED untuk ${p.pair} di harga BID ${current_bid}`);
+              console.log(`🤖 INSTANT KILL (VIRTUAL OCO) TRIGGERED untuk ${p.pair} di harga BID ${exactNum(current_bid)}`);
               await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
-              await pool.query("UPDATE portfolio_positions SET status='CLOSED', pnl=$1 WHERE id=$2", [pnl, p.id]);
+              
+              // Proteksi SQL Ganda Lapis 2
+              const statusClose = current_bid >= p.entry_price ? 'CLOSED_TP' : 'CLOSED_SL';
+              await pool.query("UPDATE portfolio_positions SET status=$1, pnl=$2 WHERE id=$3 AND pair=$4", [statusClose, pnl, p.id, p.pair]);
             } catch (err) {
               console.error(`Gagal Instant Kill ${p.pair}:`, err.message);
             } finally {
@@ -448,13 +461,21 @@ async function streamWorker() {
       portfolioData.push({ ...p, current_price: current_bid, pnl, pnl_pct: ((current_bid - p.entry_price) / p.entry_price) * 100, attention_needed, attention_reason });
     }
 
-    // --- EVALUASI BOT: AUTO-BUY (SILENT SNIPER) ---
-    // Batasan maksimal koin dihapus, eksekusi dilakukan selama ada saldo cukup
+    // --- EVALUASI BOT: AUTO-BUY (SILENT SNIPER DENGAN COOLDOWN ANTI-BULL TRAP) ---
     if (AUTO_TRADE_ENABLED) {
       const activePairs = openPositions.rows.map(p => p.pair);
       
-      // Tembak hanya koin yang lulus semua syarat (🔥 WHALE SNIPER)
-      const bestCoin = results.find(r => r.signal === "🔥 WHALE SNIPER" && !activePairs.includes(r.pair) && !isExecutingTrade[`buy_${r.pair}`]);
+      // Ambil daftar koin yang baru saja dijual dalam 2 jam terakhir (ANTI BULL-TRAP)
+      const recentTrades = await pool.query("SELECT pair FROM portfolio_positions WHERE status LIKE 'CLOSED%' AND created_at >= NOW() - INTERVAL '2 hours'");
+      const cooldownPairs = recentTrades.rows.map(r => r.pair);
+      
+      // Tembak hanya koin yang lulus syarat, TIDAK sedang dipegang, dan TIDAK dalam masa Cooldown
+      const bestCoin = results.find(r => 
+        r.signal === "🔥 WHALE SNIPER" && 
+        !activePairs.includes(r.pair) && 
+        !cooldownPairs.includes(r.pair) && // <-- Kunci Pengaman Anti-FOMO
+        !isExecutingTrade[`buy_${r.pair}`]
+      );
       
       if (bestCoin) {
         let availableIDR = 0;
@@ -463,7 +484,7 @@ async function streamWorker() {
         if (availableIDR >= CAPITAL_PER_TRADE) {
           isExecutingTrade[`buy_${bestCoin.pair}`] = true;
           try {
-            console.log(`🤖 SILENT SNIPER TRIGGERED! Menembak ${bestCoin.pair} di harga ASK Murni ${bestCoin.price}...`);
+            console.log(`🤖 SILENT SNIPER TRIGGERED! Menembak ${bestCoin.pair} di harga ASK Murni ${exactNum(bestCoin.price)}...`);
             const amount = CAPITAL_PER_TRADE / bestCoin.price;
 
             await executeIndodaxTrade(bestCoin.pair, 'buy', bestCoin.price, CAPITAL_PER_TRADE);
@@ -508,4 +529,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3 (SILENT SNIPER) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.1 (SILENT SNIPER) ONLINE - PORT ${PORT}`));
