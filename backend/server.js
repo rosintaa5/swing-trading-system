@@ -13,11 +13,11 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V3.1 (FINAL): PERTAHANAN INSTITUSIONAL & SILENT WATCHER 
-// Dilengkapi Presisi Mutlak, SQL Ganda, dan Anti-Bull Trap (Cooldown)
+// 🛡️ BUKU PINTAR V3.2 (INSTITUTIONAL GRADE): TRUE TRAILING & RISK-FREE
+// Diperbaiki: SL Longgar 8%, Anti-Whipsaw, Cooldown Mutlak (closed_at)
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1000.000 per posisi
+const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1.000.000 per posisi
 // =========================================================================
 
 app.use(cors({
@@ -60,6 +60,7 @@ async function initDB() {
         pnl FLOAT DEFAULT 0,
         status TEXT DEFAULT 'OPEN',
         created_at TIMESTAMP DEFAULT NOW(),
+        closed_at TIMESTAMP, 
         target_tp FLOAT DEFAULT 0,
         target_sl FLOAT DEFAULT 0,
         news_headline TEXT,
@@ -68,6 +69,12 @@ async function initDB() {
       );
     `);
     
+    // Auto-migrate: Tambahkan kolom closed_at jika belum ada dari versi V3.1
+    await pool.query(`
+      ALTER TABLE portfolio_positions 
+      ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP;
+    `);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS watchlist (
         id SERIAL PRIMARY KEY,
@@ -75,7 +82,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("✅ Database System & Auto-Migration Berhasil Dijalankan!");
+    console.log("✅ Database System & Auto-Migration V3.2 Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
   }
@@ -85,7 +92,7 @@ initDB();
 const BASE = "https://indodax.com/api";
 let cache = { tickers: {}, lastUpdate: 0, isFetching: false };
 
-// Memori Bot (SOP V3)
+// Memori Bot (SOP V3.2)
 let prevDataCache = {}; 
 let tickHistory = {}; 
 let latestMarketData = {
@@ -217,7 +224,7 @@ async function updateMarket() {
 }
 
 // =========================================================================
-// 🧮 RUMUS KALKULUS MIKRO & CEKLIS PERTAHANAN (SOP V3)
+// 🧮 RUMUS KALKULUS MIKRO & CEKLIS PERTAHANAN (SOP V3.2)
 // =========================================================================
 function analyzeCoin(t, pairName, btcChange) {
   const price = parseFloat(t.last || 0);
@@ -269,7 +276,7 @@ function analyzeCoin(t, pairName, btcChange) {
 
   if (btcChange < -3.0) rejectReason = "Ditolak: Terkena Badai BTC (-3% Drop)";
   else if (vol < 2000000000) rejectReason = "Ditolak: Koin Sepi (Vol < 2M IDR)";
-  else if (spread > 1.2) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`;
+  else if (spread > 1.5) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`; // Disesuaikan ke 1.5%
   else if (askPrice < vwap) rejectReason = "Ditolak: Harga di Bawah Rata-Rata (VWAP)";
   else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO";
   else if (microRsi < 45 || microRsi > 72) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`;
@@ -280,9 +287,9 @@ function analyzeCoin(t, pairName, btcChange) {
   const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
   let score = (whale_score * 2) + momentum_score;
   
-  // Virtual Target (Hanya dicatat bot, tidak di-push ke API)
-  let target_tp = askPrice * 1.03; // Base Target 3%
-  let target_sl = askPrice * 0.96; // Base Risk 4%
+  // 🛡️ PERBAIKAN: Ruang Napas Ekstra
+  let target_tp = askPrice * 1.05; // Base Target dinaikkan ke 5%
+  let target_sl = askPrice * 0.92; // Base Risk diturunkan ke 8% (Anti Gocekan Whipsaw)
   const rrr = ((target_tp - askPrice) / (askPrice - target_sl || 1)).toFixed(1);
 
   let signal = "HOLD";
@@ -290,8 +297,8 @@ function analyzeCoin(t, pairName, btcChange) {
   let watch_status = "KONSOLIDASI";
 
   if (!rejectReason) {
-     signal = "🔥 WHALE SNIPER"; // Lulus Ceklis V3!
-     news_headline = "🎯 CEKLIS V3 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
+     signal = "🔥 WHALE SNIPER"; // Lulus Ceklis V3.2!
+     news_headline = "🎯 CEKLIS V3.2 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -328,8 +335,8 @@ app.post("/buy", async (req, res) => {
     await executeIndodaxTrade(pair, 'buy', entry_price, capital);
     
     // Virtual Target
-    let final_tp = entry_price * 1.03;
-    let final_sl = entry_price * 0.96;
+    let final_tp = entry_price * 1.05;
+    let final_sl = entry_price * 0.92;
 
     await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, initial_capital, status)
@@ -349,8 +356,8 @@ app.post("/sell", async (req, res) => {
     const t = cache.tickers[p.pair];
     
     await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.buy || t.last), p.amount);
-    // Proteksi Ganda SQL pada Sell Manual
-    await pool.query("UPDATE portfolio_positions SET status='CLOSED_MANUAL' WHERE id=$1 AND pair=$2", [id, p.pair]);
+    // Proteksi Ganda SQL pada Sell Manual & Set Waktu Terjual (closed_at)
+    await pool.query("UPDATE portfolio_positions SET status='CLOSED_MANUAL', closed_at=NOW() WHERE id=$1 AND pair=$2", [id, p.pair]);
     res.json({ success: true, message: "Manual Kill Sukses." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -401,7 +408,7 @@ async function streamWorker() {
     const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const portfolioData = [];
     
-    // --- EVALUASI BOT: VIRTUAL OCO, BREAK-EVEN LOCK, & TRAILING ---
+    // --- EVALUASI BOT: VIRTUAL OCO, BREAK-EVEN LOCK, & TRUE TRAILING ---
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
       let current_bid = p.entry_price;
@@ -416,44 +423,52 @@ async function streamWorker() {
         // Live PnL Nyata (%)
         const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
         
-        // 🛡️ VIRTUAL TRAILING STOP & BREAK-EVEN LOCK (SOP V3.1)
+        // 🛡️ PERBAIKAN: TRUE TRAILING STOP & RISK-FREE EXECUTION
         let virtual_sl = p.target_sl;
         
-        if (livePnlPct >= 2.0) {
-           const breakEvenLock = p.entry_price * 1.015; // Modal + Fee + Untung 1%
-           const trailingStop = current_bid * 0.98; // Jaga jarak 2% dari BID terkini
-           virtual_sl = Math.max(p.target_sl, breakEvenLock, trailingStop); // Pastikan SL hanya bisa naik
+        // Hanya trailing jika profit sudah aman di atas 4% (Mencegah gocekan prematur)
+        if (livePnlPct >= 4.0) {
+           const breakEvenLock = p.entry_price * 1.015; // Kunci modal + Fee + Profit 1%
+           const trailingStop = current_bid * 0.96; // Jaga jarak longgar 4% dari BID terkini
+           
+           // Pastikan SL HANYA BISA NAIK, tidak akan pernah mundur mengikuti harga turun
+           virtual_sl = Math.max(p.target_sl, breakEvenLock, trailingStop); 
            
            if (virtual_sl > p.target_sl) {
-             console.log(`🔒 BREAK-EVEN / TRAILING AKTIF: ${p.pair} SL Naik ke ${exactNum(virtual_sl)}`);
-             // Proteksi SQL Ganda Lapis 1
+             console.log(`🔒 TRUE TRAILING AKTIF: ${p.pair} SL Naik ke ${exactNum(virtual_sl)}`);
              await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2 AND pair=$3", [virtual_sl, p.id, p.pair]);
              p.target_sl = virtual_sl;
              attention_needed = true;
-             attention_reason = `🚀 ZERO-RISK! Virtual SL terkunci di Area Profit (+${((virtual_sl - p.entry_price)/p.entry_price*100).toFixed(1)}%).`;
+             attention_reason = `🚀 RISK-FREE! SL Terkunci di Area Profit (+${((virtual_sl - p.entry_price)/p.entry_price*100).toFixed(1)}%).`;
            }
         } else if (livePnlPct < 0) {
            attention_needed = true;
-           attention_reason = "⚠️ Menahan posisi. Menunggu pantulan dari zona support.";
+           attention_reason = "⚠️ Menahan guncangan. Ruang napas 8% aktif. Menunggu momentum pantulan.";
         }
 
         pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
 
-        // 🔫 INSTANT KILL TRIGGER (Hanya hitungan memori, tidak di antrekan di Indodax)
+        // 🔫 INSTANT KILL TRIGGER (OCO Berbasis Memori)
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
           if (current_bid <= p.target_sl || current_bid >= p.target_tp) {
-            isExecutingTrade[`sell_${p.id}`] = true;
-            try {
-              console.log(`🤖 INSTANT KILL (VIRTUAL OCO) TRIGGERED untuk ${p.pair} di harga BID ${exactNum(current_bid)}`);
-              await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
-              
-              // Proteksi SQL Ganda Lapis 2
-              const statusClose = current_bid >= p.entry_price ? 'CLOSED_TP' : 'CLOSED_SL';
-              await pool.query("UPDATE portfolio_positions SET status=$1, pnl=$2 WHERE id=$3 AND pair=$4", [statusClose, pnl, p.id, p.pair]);
-            } catch (err) {
-              console.error(`Gagal Instant Kill ${p.pair}:`, err.message);
-            } finally {
-              delete isExecutingTrade[`sell_${p.id}`];
+            
+            // 🛡️ PERBAIKAN: FILTER GARANSI FEE BURS (Anti Kerja Bakti)
+            if (current_bid >= p.target_tp && livePnlPct < 1.5) {
+                console.log(`⏳ Menahan Jual TP untuk ${p.pair}, profit bersih masih di bawah 1.5% (Fee Buffer Aktif)`);
+            } else {
+                isExecutingTrade[`sell_${p.id}`] = true;
+                try {
+                  console.log(`🤖 INSTANT KILL TRIGGERED untuk ${p.pair} di harga BID ${exactNum(current_bid)}`);
+                  await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
+                  
+                  // Perbaikan SQL: Waktu jual kini disimpan akurat ke kolom closed_at untuk referensi cooldown
+                  const statusClose = current_bid >= p.entry_price ? 'CLOSED_TP' : 'CLOSED_SL';
+                  await pool.query("UPDATE portfolio_positions SET status=$1, pnl=$2, closed_at=NOW() WHERE id=$3 AND pair=$4", [statusClose, pnl, p.id, p.pair]);
+                } catch (err) {
+                  console.error(`Gagal Instant Kill ${p.pair}:`, err.message);
+                } finally {
+                  delete isExecutingTrade[`sell_${p.id}`];
+                }
             }
           }
         }
@@ -465,15 +480,15 @@ async function streamWorker() {
     if (AUTO_TRADE_ENABLED) {
       const activePairs = openPositions.rows.map(p => p.pair);
       
-      // Ambil daftar koin yang baru saja dijual dalam 2 jam terakhir (ANTI BULL-TRAP)
-      const recentTrades = await pool.query("SELECT pair FROM portfolio_positions WHERE status LIKE 'CLOSED%' AND created_at >= NOW() - INTERVAL '2 hours'");
+      // 🛡️ PERBAIKAN BUG COOLDOWN: Cek berdasarkan waktu Jual (closed_at), bukan waktu beli (created_at)
+      const recentTrades = await pool.query("SELECT pair FROM portfolio_positions WHERE status LIKE 'CLOSED%' AND closed_at >= NOW() - INTERVAL '2 hours'");
       const cooldownPairs = recentTrades.rows.map(r => r.pair);
       
-      // Tembak hanya koin yang lulus syarat, TIDAK sedang dipegang, dan TIDAK dalam masa Cooldown
+      // Tembak hanya koin yang lulus syarat, TIDAK sedang dipegang, dan TIDAK dalam masa Cooldown Whipsaw
       const bestCoin = results.find(r => 
         r.signal === "🔥 WHALE SNIPER" && 
         !activePairs.includes(r.pair) && 
-        !cooldownPairs.includes(r.pair) && // <-- Kunci Pengaman Anti-FOMO
+        !cooldownPairs.includes(r.pair) && // <-- Kunci Pengaman Mutlak
         !isExecutingTrade[`buy_${r.pair}`]
       );
       
@@ -529,4 +544,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.1 (SILENT SNIPER) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.2 (TRUE TRAILING) ONLINE - PORT ${PORT}`));
