@@ -85,7 +85,6 @@ export default function Page() {
     return val.replace(/[^0-9.]/g, ''); 
   };
 
-  // 🎯 PRESISI MUTLAK: Menampilkan harga asli hingga 10 desimal (Anti-Pembulatan)
   const formatHargaMurni = (angka: number) => {
     if (angka === undefined || angka === null) return "0";
     return angka.toLocaleString("id-ID", { maximumFractionDigits: 10 });
@@ -268,7 +267,7 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>🛡️ BUKU PINTAR V3 (VIRTUAL OCO):</h4>
+                <h4>🛡️ BUKU PINTAR V3.4 (VIRTUAL OCO):</h4>
                 <ul>
                   <li>Bot akan mengunci TP/SL di dalam memorinya (tidak dikirim ke Indodax).</li>
                   <li>Jika Profit mencapai <strong className="text-green">+2%</strong>, SL akan ditarik otomatis ke titik <strong className="text-white">Break-Even</strong>.</li>
@@ -287,8 +286,8 @@ export default function Page() {
 
       <header className="main-header">
         <div>
-          <h1>⚡ QUANT ENGINE V3.1: SILENT SNIPER</h1>
-          <p>Sistem Presisi Mutlak, Micro-RSI, VPA, dan Virtual Execution (Indodax Compliant)</p>
+          <h1>⚡ QUANT ENGINE V3.4: ANTI-WHIPSAW</h1>
+          <p>Sistem Presisi Mutlak, Hard-Cooldown Memory, Anti-FOMO Strikes, dan Virtual Execution</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
           <span className="dot"></span> {isConnected ? 'LIVE DATA STREAM' : 'OFFLINE SYNC'}
@@ -313,14 +312,14 @@ export default function Page() {
       <div className="control-bar">
         <nav className="tab-nav">
           <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
-          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V3 ({displayedCoins.length})</button>
+          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V3.4 ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Pantauan Manual ({data.watchlist.length})</button>
           <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Virtual ({portfolio.length})</button>
         </nav>
 
         {activeTab === "scanner" && (
           <div className="filter-group">
-            <span className="filter-label">Filter V3:</span>
+            <span className="filter-label">Filter V3.4:</span>
             <button className={signalFilter === "ALL" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("ALL")}>Semua Koin</button>
             <button className={signalFilter === "BUY_ONLY" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("BUY_ONLY")}>🔥 Lulus Syarat Sniper</button>
           </div>
@@ -331,7 +330,7 @@ export default function Page() {
         <section className="view-section dashboard-grid">
           <div className="dash-col-left">
             <div className="market-health-card">
-              <h3>📊 Rasio Kesehatan Altcoin V3</h3>
+              <h3>📊 Rasio Kesehatan Altcoin V3.4</h3>
               <div className="health-status-text">{data.stats.health}</div>
               <div className="health-bar-container">
                 <div className="bull-bar" style={{ width: data.stats.bullPct + '%' }}>{data.stats.bullPct}% Lulus Filter</div>
@@ -374,7 +373,7 @@ export default function Page() {
           <div className="dash-col-right">
             <div className="top-nominations-board">
               <h3>🏆 Sniper Target Teratas</h3>
-              <p>Koin yang lolos seluruh Ceklis Pertahanan V3 (VPA, RSI, VWAP).</p>
+              <p>Koin yang lolos seluruh Ceklis Pertahanan V3.4 (VPA, RSI, VWAP).</p>
               
               <div className="top-coins-list">
                 {topNominations.map((c: any, index: number) => (
@@ -453,7 +452,7 @@ export default function Page() {
                   </div>
 
                   <button className="execute-buy-button" onClick={() => openBuyModal(c)} disabled={c.signal === "HOLD"}>
-                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V3" : "⚡ Tembak Beli Langsung"}
+                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V3.4" : "⚡ Tembak Beli Langsung"}
                   </button>
                 </div>
               ))}
@@ -484,13 +483,13 @@ export default function Page() {
 
                   <div className="watch-info-board">
                     <div className="info-status-bar">
-                      <span className="info-label">Status V3:</span>
+                      <span className="info-label">Status V3.4:</span>
                       <strong className={`status-highlight ${getSignalClass(c.signal)}`}>{c.watch_status}</strong>
                     </div>
                     <ul className="info-bullet-list">
                       <li><b>Diagnosa Bot:</b> {c.news_headline}</li>
                       <li><b>Jarak Antrean (Spread):</b> {c.technicals.volatility.toFixed(2)}%</li>
-                      <li><b>Kekuatan RSI 1 Menit:</b> {c.technicals.buying_pressure} (Wajib 45-72)</li>
+                      <li><b>Kekuatan RSI 5 Menit:</b> {c.technicals.buying_pressure} (Wajib 45-72)</li>
                     </ul>
                   </div>
 
@@ -758,44 +757,4 @@ export default function Page() {
         .alert-card.critical .alert-badge { background: rgba(245,158,11,0.2); color: #fcd34d; }
         .alert-desc-text { font-size: 13px; color: #cbd5e1; font-weight: 600; }
         
-        .dash-quick-sell-btn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; font-size: 12px; font-weight: 600; margin-top: 15px; cursor: pointer; transition: 0.2s; }
-        .dash-quick-sell-btn:hover { background: var(--theme-red); }
-
-        .portfolio-global-dashboard { display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap; }
-        .dashboard-metric-box { flex: 1; min-width: 250px; background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
-        .dashboard-metric-box.highlight { background: rgba(16,185,129,0.05); border-color: rgba(16,185,129,0.2); }
-        .metric-title { font-size: 13px; font-weight: 600; color: var(--text-dim); }
-        .metric-value { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; }
-        
-        .mini-progress-bg { width: 100%; height: 6px; background: #0f172a; border-radius: 4px; overflow: hidden; }
-        .mt-2 { margin-top: 10px; }
-        .alert-card.success .mini-progress-fill { height: 100%; background: var(--theme-green); }
-        .alert-card.critical .mini-progress-fill { height: 100%; background: #f59e0b; }
-
-        .portfolio-vertical-stack { display: flex; flex-direction: column; gap: 12px; }
-        .portfolio-row-item { background: var(--bg-card); border-radius: 10px; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; transition: 0.3s; }
-        .port-left-section h3 { font-size: 18px; font-weight: 800; color: white; }
-        .time-subtext { font-size: 11px; color: var(--text-dim); display: block; margin-top: 4px; }
-        .modal-info-subtext { font-size: 11px; font-weight: 600; color: #94a3b8; display: block; margin-top: 2px; }
-        .zero-risk-badge { background: #f59e0b; color: #78350f; font-size: 10px; font-weight: 800; padding: 3px 6px; border-radius: 4px; border: 1px solid #fcd34d; animation: pulse 2s infinite; }
-        
-        .prices-summary-grid { display: flex; gap: 25px; background: #080c16; padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border-color); font-family: monospace; }
-        .prices-summary-grid div { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-        .prices-summary-grid span { color: var(--text-dim); font-family: sans-serif; }
-        .prices-summary-grid b { font-size: 13px; color: #94a3b8; }
-
-        .pnl-showcase { text-align: right; min-width: 130px; }
-        .pnl-showcase span { font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 2px; }
-        .pnl-showcase strong { font-size: 16px; font-weight: 800; display: block; }
-
-        .close-position-btn { background: var(--theme-red); border: none; color: white; padding: 10px 16px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; transition: 0.2s; }
-        .close-position-btn:hover:not(:disabled) { background: #dc2626; }
-        .close-position-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-        
-        .loading-container-box, .empty-placeholder { background: var(--bg-card); border: 1px dashed var(--border-color); padding: 40px; text-align: center; border-radius: 12px; color: var(--text-dim); font-size: 13.5px; }
-
-        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-      `}} />
-    </div>
-  );
-}
+        .dash-quick-sell-btn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: rgba(255,
