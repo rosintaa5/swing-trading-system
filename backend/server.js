@@ -13,8 +13,8 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 💎 BUKU PINTAR V3.4 (DIAMOND HANDS & INFINITE TRAILING)
-// Solusi Mutlak Anti-Whipsaw (Stop Hunt) & Mengejar Profit Pucuk Tanpa Batas
+// 🛡️ BUKU PINTAR V3.2 (INSTITUTIONAL GRADE): TRUE TRAILING & RISK-FREE
+// Diperbaiki: SL Longgar 8%, Anti-Whipsaw, Cooldown Mutlak (closed_at)
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1.000.000 per posisi
@@ -68,7 +68,21 @@ async function initDB() {
         initial_capital FLOAT DEFAULT 0
       );
     `);
-    console.log("✅ Database System V3.4 Berhasil Dijalankan!");
+    
+    // Auto-migrate: Tambahkan kolom closed_at jika belum ada dari versi V3.1
+    await pool.query(`
+      ALTER TABLE portfolio_positions 
+      ADD COLUMN IF NOT EXISTS closed_at TIMESTAMP;
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS watchlist (
+        id SERIAL PRIMARY KEY,
+        pair TEXT UNIQUE NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log("✅ Database System & Auto-Migration V3.2 Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
   }
@@ -78,6 +92,7 @@ initDB();
 const BASE = "https://indodax.com/api";
 let cache = { tickers: {}, lastUpdate: 0, isFetching: false };
 
+// Memori Bot (SOP V3.2)
 let prevDataCache = {}; 
 let tickHistory = {}; 
 let latestMarketData = {
@@ -90,6 +105,7 @@ let latestMarketData = {
 
 let isExecutingTrade = {}; 
 
+// 🎯 FUNGSI PENCEGAH NOTASI ILMIAH & PEMBULATAN
 function exactNum(num) {
   return Number(num).toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 10 });
 }
@@ -108,8 +124,11 @@ async function getIndodaxCoinBalance(coinName = 'idr') {
     timeout: 5000
   });
   
-  if (response.data.success === 1) return parseFloat(response.data.return.balance[coinName] || 0);
-  throw new Error(response.data.error);
+  if (response.data.success === 1) {
+    return parseFloat(response.data.return.balance[coinName] || 0);
+  } else {
+    throw new Error(response.data.error);
+  }
 }
 
 async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
@@ -124,18 +143,28 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
     try {
       const realBalance = await getIndodaxCoinBalance(coinName);
       if (realBalance < finalAmount) {
-         console.log(`⚠️ Saldo riil ${coinName} (${realBalance}) lebih kecil dari target. Kalibrasi...`);
+         console.log(`⚠️ Saldo riil ${coinName} (${realBalance}) lebih kecil dari target (${finalAmount}). Kalibrasi otomatis...`);
          finalAmount = realBalance; 
       }
-      if (finalAmount <= 0) throw new Error(`Ditolak sistem: Saldo riil ${coinName} kosong.`);
-    } catch(e) { console.log(`Peringatan sinkronisasi: ${e.message}`); }
+      if (finalAmount <= 0) {
+         throw new Error(`Ditolak sistem: Saldo riil ${coinName} kosong.`);
+      }
+    } catch(e) {
+      console.log(`Peringatan sinkronisasi saldo: ${e.message}`);
+    }
   }
 
+  // HARGA TIDAK BOLEH DIBULATKAN SAMA SEKALI
   const exactPrice = exactNum(price); 
+
   const data = { method: 'trade', timestamp: Date.now(), pair: pair, type: type, price: exactPrice };
   
-  if (type === 'buy') data['idr'] = exactNum(finalAmount); 
-  else if (type === 'sell') data[coinName] = exactNum(isRetry ? Math.floor(finalAmount) : finalAmount); 
+  if (type === 'buy') {
+    data['idr'] = exactNum(finalAmount); 
+  } else if (type === 'sell') {
+    let safeAmount = isRetry ? Math.floor(finalAmount) : finalAmount;
+    data[coinName] = exactNum(safeAmount); 
+  }
 
   const postData = querystring.stringify(data);
   const signature = crypto.createHmac('sha512', secretKey).update(postData).digest('hex');
@@ -152,7 +181,7 @@ async function executeIndodaxTrade(pair, type, price, amount, isRetry = false) {
     }
   } catch (error) {
     if (!isRetry && type === 'sell' && error.message && error.message.includes("amount can't be in decimal")) {
-      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Auto-Fix membulatkan ke bawah...`);
+      console.log(`⚠️ Peringatan Desimal Indodax tertangkap pada ${pair}. Membulatkan angka ke bawah dan menembak ulang (Auto-Fix)...`);
       return await executeIndodaxTrade(pair, type, price, amount, true); 
     }
     throw error;
@@ -179,10 +208,10 @@ async function updateMarket() {
 
         if (change <= -3.0) {
           bias = "BEARISH";
-          news = `⚠️ BADAI BTC! Bitcoin turun tajam. Market penuh risiko.`;
+          news = `⚠️ BADAI BTC! Bitcoin turun tajam (${change.toFixed(2)}%). Filter Anti-Badai aktif. Pembelian dihentikan.`;
         } else if (change >= 2.0) {
           bias = "BULLISH";
-          news = `🚀 BTC BULLISH (${change.toFixed(2)}%). Altcoin Party Siap Dimulai.`;
+          news = `🚀 BTC BULLISH (${change.toFixed(2)}%). Momentum pasar sangat sehat untuk Sniper.`;
         }
         latestMarketData.btc = { price, change, bias, news, newsList: [] };
       }
@@ -195,7 +224,7 @@ async function updateMarket() {
 }
 
 // =========================================================================
-// 🧮 RUMUS KALKULUS MIKRO V3.4 (DIAMOND HANDS - KALIBRASI VOL 3M)
+// 🧮 RUMUS KALKULUS MIKRO & CEKLIS PERTAHANAN (SOP V3.2)
 // =========================================================================
 function analyzeCoin(t, pairName, btcChange) {
   const price = parseFloat(t.last || 0);
@@ -207,12 +236,16 @@ function analyzeCoin(t, pairName, btcChange) {
   
   if (!price || high === low) return null;
 
+  // 1. Rumus Spread
   const spread = ((askPrice - bidPrice) / bidPrice) * 100;
+  
+  // 2. Rumus VWAP (Pendekatan Harian)
   const vwap = (high + low + askPrice) / 3;
 
+  // 3. Rumus Micro-RSI (1 Menit / 12 Tick x 5 Detik)
   if (!tickHistory[pairName]) tickHistory[pairName] = [];
   tickHistory[pairName].push(askPrice);
-  if (tickHistory[pairName].length > 36) tickHistory[pairName].shift(); 
+  if (tickHistory[pairName].length > 12) tickHistory[pairName].shift();
   
   let gains = 0, losses = 0;
   for(let i = 1; i < tickHistory[pairName].length; i++) {
@@ -221,44 +254,51 @@ function analyzeCoin(t, pairName, btcChange) {
      else losses -= diff;
   }
   let microRsi = 50; 
-  if (gains + losses > 0) microRsi = 100 - (100 / (1 + (gains / (losses === 0 ? 1 : losses))));
+  if (gains + losses > 0) {
+     microRsi = 100 - (100 / (1 + (gains / (losses === 0 ? 1 : losses))));
+  }
 
+  // 4. Rumus VPA (Volume-Price Accumulation)
   const prevVol = prevDataCache[pairName]?.vol || vol;
   const prevAsk = prevDataCache[pairName]?.ask || askPrice;
   const vpa = (vol - prevVol) * (askPrice - prevAsk);
+  
+  // Simpan state untuk loop berikutnya
   prevDataCache[pairName] = { vol, ask: askPrice }; 
 
   const change = t.change ? parseFloat(t.change) : ((high - low) / (low || 1)) * 100;
   let dailyRange = high - low;
   if (dailyRange <= 0) dailyRange = price * 0.05;
 
+  // 🛡️ CEKLIS PERTAHANAN (Filter Mutlak)
   let rejectReason = null;
-  const maxRoomToBreathe = low + (0.8 * dailyRange);
+  const maxRoomToBreathe = low + (0.8 * dailyRange); // 80% dari batas tertinggi
 
   if (btcChange < -3.0) rejectReason = "Ditolak: Terkena Badai BTC (-3% Drop)";
-  else if (vol < 3000000000) rejectReason = "Ditolak: Likuiditas Rendah (Vol < 3M IDR)"; 
-  else if (spread > 1.2) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`; 
+  else if (vol < 2000000000) rejectReason = "Ditolak: Koin Sepi (Vol < 2M IDR)";
+  else if (spread > 1.5) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`; // Disesuaikan ke 1.5%
   else if (askPrice < vwap) rejectReason = "Ditolak: Harga di Bawah Rata-Rata (VWAP)";
-  else if (askPrice > vwap * 1.03) rejectReason = "Ditolak: Anti-FOMO. Harga sudah menjauh >3% dari VWAP."; 
-  else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk Area Resistance";
-  else if (microRsi < 40 || microRsi > 70) rejectReason = `Ditolak: Micro-RSI Tidak Ideal (${microRsi.toFixed(1)})`; 
-  else if (vpa <= 0) rejectReason = "Ditolak: VPA Negatif (Distribusi Paus)";
+  else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO";
+  else if (microRsi < 45 || microRsi > 72) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`;
+  else if (vpa <= 0) rejectReason = "Ditolak: VPA Negatif (Paus Sedang Distribusi/Buang Barang)";
 
+  // Hitung Skor Momentum
   const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
   const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
   let score = (whale_score * 2) + momentum_score;
   
-  // 🛡️ V3.4: SL Elastis & TP Dinamis Awal
-  let target_tp = askPrice * 1.04; // Trigger awal untuk menarik SL (Bukan dijual)
-  let target_sl = askPrice * 0.85; // RUANG NAPAS 15%! Anti-Whipsaw (Goyangan Bandar)
-  
+  // 🛡️ PERBAIKAN: Ruang Napas Ekstra
+  let target_tp = askPrice * 1.05; // Base Target dinaikkan ke 5%
+  let target_sl = askPrice * 0.92; // Base Risk diturunkan ke 8% (Anti Gocekan Whipsaw)
+  const rrr = ((target_tp - askPrice) / (askPrice - target_sl || 1)).toFixed(1);
+
   let signal = "HOLD";
   let news_headline = rejectReason || "Koin bergerak wajar di bawah standar Sniper.";
   let watch_status = "KONSOLIDASI";
 
   if (!rejectReason) {
-     signal = "🔥 WHALE SNIPER"; 
-     news_headline = "🎯 KUNCI TARGET V3.4! Volume mantap, siap terbang. Hold kuat!";
+     signal = "🔥 WHALE SNIPER"; // Lulus Ceklis V3.2!
+     news_headline = "🎯 CEKLIS V3.2 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -266,7 +306,7 @@ function analyzeCoin(t, pairName, btcChange) {
     price: askPrice, bid: bidPrice, high, low, vol, change, score, signal, 
     news_headline, news_impact: rejectReason ? "NEUTRAL" : "BULLISH", 
     capital_advice: signal === "🔥 WHALE SNIPER" ? "ALL-IN / SNIPER READY!" : "Jangan Masuk.", 
-    rrr: "INFINITE", watch_status, watch_desc: rejectReason || "Memenuhi syarat Kalkulus Mikro.",
+    rrr, watch_status, watch_desc: rejectReason || "Memenuhi syarat Kalkulus Mikro.",
     target_tp: parseFloat(target_tp.toFixed(4)), target_sl: parseFloat(target_sl.toFixed(4)),
     technicals: { buying_pressure: parseFloat(microRsi.toFixed(0)), volatility: spread, vpa }
   };
@@ -287,21 +327,23 @@ app.get("/portfolio", async (req, res) => {
   }
 });
 
+// Manual Execute Endpoints
 app.post("/buy", async (req, res) => {
-  const { pair, entry_price, capital, news_headline, news_impact } = req.body;
+  const { pair, entry_price, capital, high, low, news_headline, news_impact } = req.body;
   try {
     const amount = capital / entry_price; 
     await executeIndodaxTrade(pair, 'buy', entry_price, capital);
     
-    let final_tp = entry_price * 1.04;
-    let final_sl = entry_price * 0.85; // Toleransi drop 15% di awal
+    // Virtual Target
+    let final_tp = entry_price * 1.05;
+    let final_sl = entry_price * 0.92;
 
     await pool.query(
       `INSERT INTO portfolio_positions (pair, entry_price, amount, target_tp, target_sl, news_headline, news_impact, initial_capital, status)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'OPEN')`,
       [pair, entry_price, amount, final_tp, final_sl, news_headline, news_impact, capital]
     );
-    res.json({ success: true, message: `Beli Manual Sukses! Ruang Napas SL Aktif.` });
+    res.json({ success: true, message: `Beli Manual Sukses!` });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -314,6 +356,7 @@ app.post("/sell", async (req, res) => {
     const t = cache.tickers[p.pair];
     
     await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.buy || t.last), p.amount);
+    // Proteksi Ganda SQL pada Sell Manual & Set Waktu Terjual (closed_at)
     await pool.query("UPDATE portfolio_positions SET status='CLOSED_MANUAL', closed_at=NOW() WHERE id=$1 AND pair=$2", [id, p.pair]);
     res.json({ success: true, message: "Manual Kill Sukses." });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -335,7 +378,7 @@ app.delete("/watchlist/:pair", async (req, res) => {
 });
 
 // =========================================================================
-// 🚀 SILENT WATCHER LOOP V3.4 (DIAMOND HANDS EXECUTION)
+// 🚀 SILENT WATCHER LOOP (Berjalan tiap 5 detik)
 // =========================================================================
 let isWorkerRunning = false;
 async function streamWorker() {
@@ -350,6 +393,7 @@ async function streamWorker() {
     const watchData = await pool.query("SELECT pair FROM watchlist");
     const watchPairs = watchData.rows.map(row => row.pair);
     const results = [];
+    
     const btcChange = latestMarketData.btc.change;
 
     Object.keys(tickers).forEach((k) => {
@@ -359,9 +403,12 @@ async function streamWorker() {
     });
 
     const top = results.sort((a, b) => b.score - a.score).slice(0, 20);
+    const watchlistData = results.filter(r => watchPairs.includes(r.pair));
+
     const openPositions = await pool.query("SELECT * FROM portfolio_positions WHERE status='OPEN' ORDER BY id DESC");
     const portfolioData = [];
     
+    // --- EVALUASI BOT: VIRTUAL OCO, BREAK-EVEN LOCK, & TRUE TRAILING ---
     for (const p of openPositions.rows) {
       const t = tickers[p.pair];
       let current_bid = p.entry_price;
@@ -372,73 +419,76 @@ async function streamWorker() {
       if (t) {
         current_bid = parseFloat(t.buy || t.last); 
         pnl = (current_bid - p.entry_price) * p.amount;
+        
+        // Live PnL Nyata (%)
         const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
         
-        let virtual_tp = p.target_tp;
+        // 🛡️ PERBAIKAN: TRUE TRAILING STOP & RISK-FREE EXECUTION
         let virtual_sl = p.target_sl;
-
-        // 💎 DIAMOND HANDS & INFINITE TRAILING LOGIC
-        if (current_bid >= p.target_tp) {
-            // JANGAN JUAL! PUSH TP LEBIH TINGGI & KUNCI SL DI AREA PROFIT
-            const new_tp = current_bid * 1.05; // Dorong TP 5% di atas harga sekarang
-            const new_sl = current_bid * 0.96; // Tarik SL ketat 4% di bawah harga sekarang
-            
-            if (new_sl > p.target_sl) {
-               console.log(`💎 INFINITE TRAILING: ${p.pair} TP Naik ke ${exactNum(new_tp)}. Profit SL terkunci di ${exactNum(new_sl)}`);
-               await pool.query("UPDATE portfolio_positions SET target_tp=$1, target_sl=$2 WHERE id=$3 AND pair=$4", [new_tp, new_sl, p.id, p.pair]);
-               virtual_tp = new_tp;
-               virtual_sl = new_sl;
-               attention_needed = true;
-               attention_reason = `🚀 DIAMOND HANDS! Mengikuti roket naik. Profit terkunci aman.`;
-            }
-        } else if (livePnlPct >= 2.0 && p.target_sl < p.entry_price) {
-            // Kunci modal secepatnya jika profit sudah +2% tapi belum sentuh TP
-            const be_lock = p.entry_price * 1.005; // Lock tipis di atas modal (Bayar fee)
-            if (be_lock > p.target_sl) {
-               await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2", [be_lock, p.id]);
-               virtual_sl = be_lock;
-               attention_needed = true;
-               attention_reason = `🔒 MODAL AMAN! SL dinaikkan ke titik Impas.`;
-            }
+        
+        // Hanya trailing jika profit sudah aman di atas 4% (Mencegah gocekan prematur)
+        if (livePnlPct >= 4.0) {
+           const breakEvenLock = p.entry_price * 1.015; // Kunci modal + Fee + Profit 1%
+           const trailingStop = current_bid * 0.96; // Jaga jarak longgar 4% dari BID terkini
+           
+           // Pastikan SL HANYA BISA NAIK, tidak akan pernah mundur mengikuti harga turun
+           virtual_sl = Math.max(p.target_sl, breakEvenLock, trailingStop); 
+           
+           if (virtual_sl > p.target_sl) {
+             console.log(`🔒 TRUE TRAILING AKTIF: ${p.pair} SL Naik ke ${exactNum(virtual_sl)}`);
+             await pool.query("UPDATE portfolio_positions SET target_sl=$1 WHERE id=$2 AND pair=$3", [virtual_sl, p.id, p.pair]);
+             p.target_sl = virtual_sl;
+             attention_needed = true;
+             attention_reason = `🚀 RISK-FREE! SL Terkunci di Area Profit (+${((virtual_sl - p.entry_price)/p.entry_price*100).toFixed(1)}%).`;
+           }
         } else if (livePnlPct < 0) {
            attention_needed = true;
-           attention_reason = `🛡️ Sabar. Stop Loss Elastis (Batas bawah: Rp ${exactNum(virtual_sl)}) sedang menahan gocekan bandar.`;
+           attention_reason = "⚠️ Menahan guncangan. Ruang napas 8% aktif. Menunggu momentum pantulan.";
         }
 
         pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
 
-        // ⚡ EKSEKUSI HANYA JIKA TERKENA SL (Bisa SL Loss, bisa SL Profit/Trailing)
+        // 🔫 INSTANT KILL TRIGGER (OCO Berbasis Memori)
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
-          if (current_bid <= virtual_sl) {
-             isExecutingTrade[`sell_${p.id}`] = true;
-             try {
-                console.log(`🤖 CUT / TAKE PROFIT TRIGGERED: ${p.pair} menyentuh garis bawah di BID ${exactNum(current_bid)}`);
-                await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
-                const statusClose = current_bid >= p.entry_price ? 'CLOSED_TP' : 'CLOSED_SL';
-                await pool.query("UPDATE portfolio_positions SET status=$1, pnl=$2, closed_at=NOW() WHERE id=$3 AND pair=$4", [statusClose, pnl, p.id, p.pair]);
-             } catch (err) {
-                console.error(`Gagal Auto-Sell ${p.pair}:`, err.message);
-             } finally {
-                delete isExecutingTrade[`sell_${p.id}`];
-             }
+          if (current_bid <= p.target_sl || current_bid >= p.target_tp) {
+            
+            // 🛡️ PERBAIKAN: FILTER GARANSI FEE BURS (Anti Kerja Bakti)
+            if (current_bid >= p.target_tp && livePnlPct < 1.5) {
+                console.log(`⏳ Menahan Jual TP untuk ${p.pair}, profit bersih masih di bawah 1.5% (Fee Buffer Aktif)`);
+            } else {
+                isExecutingTrade[`sell_${p.id}`] = true;
+                try {
+                  console.log(`🤖 INSTANT KILL TRIGGERED untuk ${p.pair} di harga BID ${exactNum(current_bid)}`);
+                  await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
+                  
+                  // Perbaikan SQL: Waktu jual kini disimpan akurat ke kolom closed_at untuk referensi cooldown
+                  const statusClose = current_bid >= p.entry_price ? 'CLOSED_TP' : 'CLOSED_SL';
+                  await pool.query("UPDATE portfolio_positions SET status=$1, pnl=$2, closed_at=NOW() WHERE id=$3 AND pair=$4", [statusClose, pnl, p.id, p.pair]);
+                } catch (err) {
+                  console.error(`Gagal Instant Kill ${p.pair}:`, err.message);
+                } finally {
+                  delete isExecutingTrade[`sell_${p.id}`];
+                }
+            }
           }
         }
-
-        p.target_tp = virtual_tp;
-        p.target_sl = virtual_sl;
       }
       portfolioData.push({ ...p, current_price: current_bid, pnl, pnl_pct: ((current_bid - p.entry_price) / p.entry_price) * 100, attention_needed, attention_reason });
     }
 
+    // --- EVALUASI BOT: AUTO-BUY (SILENT SNIPER DENGAN COOLDOWN ANTI-BULL TRAP) ---
     if (AUTO_TRADE_ENABLED) {
       const activePairs = openPositions.rows.map(p => p.pair);
+      
+      // 🛡️ PERBAIKAN BUG COOLDOWN: Cek berdasarkan waktu Jual (closed_at), bukan waktu beli (created_at)
       const recentTrades = await pool.query("SELECT pair FROM portfolio_positions WHERE status LIKE 'CLOSED%' AND closed_at >= NOW() - INTERVAL '2 hours'");
       const cooldownPairs = recentTrades.rows.map(r => r.pair);
       
+      // Tembak hanya koin yang lulus syarat, TIDAK sedang dipegang, dan TIDAK dalam masa Cooldown Whipsaw
       const bestCoin = results.find(r => 
         r.signal === "🔥 WHALE SNIPER" && 
         !activePairs.includes(r.pair) && 
-        !cooldownPairs.includes(r.pair) && 
+        !cooldownPairs.includes(r.pair) && // <-- Kunci Pengaman Mutlak
         !isExecutingTrade[`buy_${r.pair}`]
       );
       
@@ -449,8 +499,9 @@ async function streamWorker() {
         if (availableIDR >= CAPITAL_PER_TRADE) {
           isExecutingTrade[`buy_${bestCoin.pair}`] = true;
           try {
-            console.log(`🤖 SILENT SNIPER Beli ${bestCoin.pair} di harga ASK Murni ${exactNum(bestCoin.price)}...`);
+            console.log(`🤖 SILENT SNIPER TRIGGERED! Menembak ${bestCoin.pair} di harga ASK Murni ${exactNum(bestCoin.price)}...`);
             const amount = CAPITAL_PER_TRADE / bestCoin.price;
+
             await executeIndodaxTrade(bestCoin.pair, 'buy', bestCoin.price, CAPITAL_PER_TRADE);
             
             await pool.query(
@@ -468,8 +519,9 @@ async function streamWorker() {
 
     latestMarketData.top = top;
     latestMarketData.portfolio = portfolioData;
-    latestMarketData.watchlist = results.filter(r => watchPairs.includes(r.pair));
+    latestMarketData.watchlist = watchlistData;
     
+    // Health Stats
     const bullsCount = top.filter(c => c.change > 0).length;
     latestMarketData.stats = { 
       bullPct: Math.round((bullsCount / (top.length || 1)) * 100), 
@@ -488,6 +540,8 @@ async function streamWorker() {
 streamWorker();
 setInterval(streamWorker, 5000); 
 
-io.on("connection", (socket) => socket.emit("market_data", latestMarketData));
+io.on("connection", (socket) => {
+  socket.emit("market_data", latestMarketData);
+});
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.4 (DIAMOND HANDS) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.2 (TRUE TRAILING) ONLINE - PORT ${PORT}`));
