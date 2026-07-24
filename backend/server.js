@@ -13,10 +13,10 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V3.6 (EXTREME ANTI-WHIPSAW & REBOUND DETECTION)
-// Diperbarui: Rebound Tracker (Pembeku SL saat harga mantul), 
-// Delay SL Ekstrem (60 Detik murni nyungsep), dan RSI Savior (42).
-// Seluruh Indikator Lama (VPA, VWAP, Spread, Cooldown) Dipertahankan 100%.
+// 🛡️ BUKU PINTAR V4.0 (ULTIMATE FRONT-RUNNING & ANTI-WHIPSAW)
+// Diperbarui: Analisis Tembok Bandar (Membaca Orderbook Depth untuk 
+// menikung target TP sebelum dipukul bandar turun). 
+// Semua fitur Rebound Tracker, Delay SL, dan RSI Savior dipertahankan 100%.
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1.000.000 per posisi
@@ -83,7 +83,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("✅ Database System & Auto-Migration V3.6 Berhasil Dijalankan!");
+    console.log("✅ Database System & Auto-Migration V4.0 Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
   }
@@ -100,6 +100,9 @@ let isExecutingTrade = {};
 let activeCooldowns = {}; 
 let buy_strikes = {};     
 
+// [NEW V4.0] Cache Memori Kedalaman Antrean (Orderbook Depth) untuk menghindari Limit API
+let depthCache = {}; 
+
 let latestMarketData = {
   btc: { price: 0, change: 0, bias: "NEUTRAL", news: "Menghubungkan ke satelit data...", newsList: [] },
   stats: { bullPct: 50, bearPct: 50, health: "NEUTRAL" },
@@ -108,7 +111,6 @@ let latestMarketData = {
   watchlist: []
 };
 
-// 🎯 FUNGSI PENCEGAH NOTASI ILMIAH & PEMBULATAN
 function exactNum(num) {
   return Number(num).toLocaleString('fullwide', { useGrouping: false, maximumFractionDigits: 10 });
 }
@@ -143,6 +145,22 @@ async function getIndodaxCoinBalance(coinName = 'idr') {
     return parseFloat(response.data.return.balance[coinName] || 0);
   } else {
     throw new Error(response.data.error);
+  }
+}
+
+// [NEW V4.0] Helper Function untuk membaca Antrean Pasar (Orderbook)
+async function getOrderbookDepth(pair) {
+  const now = Date.now();
+  // Gunakan memori cache agar Indodax tidak memblokir API kita jika diminta terus terusan
+  if (depthCache[pair] && now - depthCache[pair].timestamp < 5000) {
+      return depthCache[pair].data;
+  }
+  try {
+      const res = await axios.get(`https://indodax.com/api/depth/${pair}`, { timeout: 2500 });
+      depthCache[pair] = { timestamp: now, data: res.data };
+      return res.data;
+  } catch (e) {
+      return null;
   }
 }
 
@@ -302,7 +320,7 @@ function analyzeCoin(t, pairName, btcChange) {
 
   if (!rejectReason) {
      signal = "🔥 WHALE SNIPER"; 
-     news_headline = "🎯 CEKLIS V3.6 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
+     news_headline = "🎯 CEKLIS V4.0 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -431,6 +449,7 @@ async function streamWorker() {
         
         const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
         let virtual_sl = p.target_sl;
+        let virtual_tp = p.target_tp; // [NEW V4.0] TP akan bisa diubah secara live jika ada Tembok
         
         if (livePnlPct >= 4.0) {
            const breakEvenLock = p.entry_price * 1.015; 
@@ -450,11 +469,46 @@ async function streamWorker() {
            attention_reason = "⚠️ Menahan guncangan harga. Menunggu momentum pantulan.";
         }
 
+        // =========================================================================
+        // 🧱 [NEW V4.0] ANALISIS TEMBOK BANDAR (FRONT-RUNNING)
+        // Jika koin kita sedang dalam posisi cuan (Profit > 1.5%), kita mulai 
+        // mengawasi buku orderbook. Jika ada Tembok Raksasa menghalangi jalan, 
+        // bot akan mencuri start dengan menjual tepat di bawah tembok tersebut.
+        // =========================================================================
+        if (livePnlPct >= 1.5 && AUTO_TRADE_ENABLED) {
+            const depthData = await getOrderbookDepth(p.pair);
+            if (depthData && depthData.sell) {
+                // Memindai antrean jual (Ask)
+                for (let i = 0; i < depthData.sell.length; i++) {
+                    const askPrice = parseFloat(depthData.sell[i][0]);
+                    const askAmt = parseFloat(depthData.sell[i][1]);
+                    const idrVol = askPrice * askAmt; // Total uang yang menghalangi
+
+                    // Syarat mendeteksi tembok: 
+                    // 1. Tembok nilainya lebih dari Rp 100 Juta Rupiah.
+                    // 2. Posisi tembok ada di depan kita (di atas harga sekarang, tapi di bawah target asli kita).
+                    if (askPrice > current_bid && askPrice <= virtual_tp && idrVol >= 100000000) {
+                        const frontRunTP = askPrice * 0.995; // Nikung 0.5% lebih murah dari tembok
+                        
+                        // Pastikan walau kita nikung, kita tetap profit minimal 1.5% dari modal awal
+                        if (frontRunTP > p.entry_price * 1.015) { 
+                            virtual_tp = frontRunTP;
+                            attention_needed = true;
+                            attention_reason = `🧱 TEMBOK BANDAR Rp ${(idrVol / 1000000).toFixed(0)} Juta terdeteksi di Rp ${exactNum(askPrice)}! Bot menikung (Front-Run) TP ke Rp ${exactNum(virtual_tp)}.`;
+                            console.log(attention_reason);
+                            break; // Ketemu tembok terdekat, langsung pasang target nikung baru, hentikan pencarian.
+                        }
+                    }
+                }
+            }
+        }
+
         pool.query("UPDATE portfolio_positions SET pnl=$1 WHERE id=$2", [pnl, p.id]).catch(e => console.error(e));
 
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
           
-          if (current_bid >= p.target_tp) {
+          // SKENARIO A: TAKE PROFIT (MENGGUNAKAN VIRTUAL_TP YANG SUDAH DITIKUNG)
+          if (current_bid >= virtual_tp) {
             if (livePnlPct < 1.5) {
                 console.log(`⏳ Menahan Jual TP untuk ${p.pair}, profit bersih masih di bawah 1.5% (Fee Buffer Aktif)`);
             } else {
@@ -473,29 +527,24 @@ async function streamWorker() {
             }
           }
           
-          // SKENARIO B: STOP LOSS DENGAN EXTREME ANTI-WHIPSAW & REBOUND DETECTION (V3.6)
+          // SKENARIO B: STOP LOSS DENGAN EXTREME ANTI-WHIPSAW & REBOUND DETECTION
           else if (current_bid <= p.target_sl) {
              const currentRSI = tickHistory[p.pair] ? calculateRSI(tickHistory[p.pair]) : 50;
              
-             // [NEW V3.6] Deteksi Rebound: Cek apakah harga bid detik ini lebih tinggi dari detik sebelumnya (sedang memantul)
              const historyLen = tickHistory[p.pair] ? tickHistory[p.pair].length : 0;
              const isRebounding = historyLen >= 2 && (tickHistory[p.pair][historyLen - 1] > tickHistory[p.pair][historyLen - 2]);
 
-             // Guard 1: Penyelamatan RSI Diperlebar (42) ATAU Harga Sedang Rebound
              if ((currentRSI < 42 || isRebounding) && btcChange > -3.0) {
                  attention_needed = true;
                  attention_reason = `🛡️ ELASTIC SL AKTIF: RSI Oversold (${currentRSI.toFixed(0)}) atau sedang Rebound. Membekukan Cut-Loss!`;
                  console.log(attention_reason);
                  
-                 // Jangan dibuang strikenya, kurangi pelan-pelan. Kalau gagal rebound, tetap bisa dipotong.
                  if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
              } 
-             // Guard 2: Delay Konfirmasi Ekstrem 60 Detik Murni
              else {
                  if (!sl_strikes[p.id]) sl_strikes[p.id] = 1;
                  else sl_strikes[p.id]++;
 
-                 // [FIX V3.6] Delay Cut-Loss dinaikkan jadi 12 kali (60 Detik). Bandar tidak bisa nahan dump palsu selama ini.
                  if (sl_strikes[p.id] >= 12) { 
                      isExecutingTrade[`sell_${p.id}`] = true;
                      try {
@@ -594,4 +643,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V3.6 (EXTREME ANTI-WHIPSAW) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.0 (ULTIMATE FRONT-RUNNING) ONLINE - PORT ${PORT}`));
