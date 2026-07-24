@@ -13,10 +13,12 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V4.0 (ULTIMATE FRONT-RUNNING & ANTI-WHIPSAW)
-// Diperbarui: Analisis Tembok Bandar (Membaca Orderbook Depth untuk 
-// menikung target TP sebelum dipukul bandar turun). 
-// Semua fitur Rebound Tracker, Delay SL, dan RSI Savior dipertahankan 100%.
+// 🛡️ BUKU PINTAR V4.1 (ULTIMATE HEDGE FUND EDITION)
+// Diperbarui dengan 4 Pelindung Baru Anti-Bandar:
+// 1. Anti Wash-Trading (Mendeteksi Volume Ping-Pong Palsu)
+// 2. Dynamic Exit Spread Guard (Mencegah Cut-loss saat Orderbook Kosong)
+// 3. Time-Stop Invalidation (Anti Salami-Slicing / Pendarahan Halus 4 Jam)
+// 4. Semua fitur V4.0 (Front-Running Tembok, Rebound, dll) dipertahankan!
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1.000.000 per posisi
@@ -83,7 +85,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("✅ Database System & Auto-Migration V4.0 Berhasil Dijalankan!");
+    console.log("✅ Database System & Auto-Migration V4.1 Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
   }
@@ -100,7 +102,7 @@ let isExecutingTrade = {};
 let activeCooldowns = {}; 
 let buy_strikes = {};     
 
-// [NEW V4.0] Cache Memori Kedalaman Antrean (Orderbook Depth) untuk menghindari Limit API
+// Cache Orderbook Depth (V4.0)
 let depthCache = {}; 
 
 let latestMarketData = {
@@ -148,10 +150,8 @@ async function getIndodaxCoinBalance(coinName = 'idr') {
   }
 }
 
-// [NEW V4.0] Helper Function untuk membaca Antrean Pasar (Orderbook)
 async function getOrderbookDepth(pair) {
   const now = Date.now();
-  // Gunakan memori cache agar Indodax tidak memblokir API kita jika diminta terus terusan
   if (depthCache[pair] && now - depthCache[pair].timestamp < 5000) {
       return depthCache[pair].data;
   }
@@ -279,6 +279,10 @@ function analyzeCoin(t, pairName, btcChange) {
   const prevAsk = prevDataCache[pairName]?.ask || askPrice;
   const vpa = (vol - prevVol) * (askPrice - prevAsk);
   
+  // [NEW V4.1] Anti Wash-Trading Filter
+  const tickVolChange = vol - prevVol;
+  const tickPriceChange = prevAsk > 0 ? (Math.abs(askPrice - prevAsk) / prevAsk) * 100 : 0;
+  
   prevDataCache[pairName] = { vol, ask: askPrice }; 
 
   const change = t.change ? parseFloat(t.change) : ((high - low) / (low || 1)) * 100;
@@ -288,6 +292,7 @@ function analyzeCoin(t, pairName, btcChange) {
   let rejectReason = null;
   const maxRoomToBreathe = low + (0.8 * dailyRange);
 
+  // [FIX V4.1] Tambahan Logika Wash-Trading Rejection
   if (btcChange < -3.0) rejectReason = "Ditolak: Terkena Badai BTC (-3% Drop)";
   else if (vol < 2000000000) rejectReason = "Ditolak: Koin Sepi (Vol < 2M IDR)";
   else if (spread > 1.5) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`;
@@ -295,6 +300,7 @@ function analyzeCoin(t, pairName, btcChange) {
   else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO";
   else if (microRsi < 40 || microRsi > 82) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`;
   else if (vpa <= 0) rejectReason = "Ditolak: VPA Negatif (Paus Sedang Distribusi/Buang Barang)";
+  else if (tickVolChange > 100000000 && tickPriceChange < 0.05) rejectReason = "Ditolak: Indikasi Wash-Trading (Volume Palsu Bandar)";
 
   const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
   const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
@@ -320,7 +326,7 @@ function analyzeCoin(t, pairName, btcChange) {
 
   if (!rejectReason) {
      signal = "🔥 WHALE SNIPER"; 
-     news_headline = "🎯 CEKLIS V4.0 TERPENUHI! VPA Positif & RSI Sehat. Paus terdeteksi mengakumulasi koin ini!";
+     news_headline = "🎯 V4.1 ULTIMATE TERPENUHI! Lolos Filter Wash-Trading. Paus terdeteksi mengakumulasi koin ini!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -444,13 +450,18 @@ async function streamWorker() {
       let attention_reason = "";
       
       if (t) {
+        const current_ask = parseFloat(t.sell || t.last);
         current_bid = parseFloat(t.buy || t.last); 
         pnl = (current_bid - p.entry_price) * p.amount;
         
         const livePnlPct = ((current_bid - p.entry_price) / p.entry_price) * 100;
+        const liveSpread = ((current_ask - current_bid) / current_bid) * 100;
+        const holdTimeHours = (Date.now() - new Date(p.created_at).getTime()) / (1000 * 60 * 60);
+
         let virtual_sl = p.target_sl;
-        let virtual_tp = p.target_tp; // [NEW V4.0] TP akan bisa diubah secara live jika ada Tembok
+        let virtual_tp = p.target_tp; 
         
+        // 🚀 TRUE TRAILING STOP & ZERO-RISK LOCK
         if (livePnlPct >= 4.0) {
            const breakEvenLock = p.entry_price * 1.015; 
            const trailingStop = current_bid * 0.96; 
@@ -469,34 +480,23 @@ async function streamWorker() {
            attention_reason = "⚠️ Menahan guncangan harga. Menunggu momentum pantulan.";
         }
 
-        // =========================================================================
-        // 🧱 [NEW V4.0] ANALISIS TEMBOK BANDAR (FRONT-RUNNING)
-        // Jika koin kita sedang dalam posisi cuan (Profit > 1.5%), kita mulai 
-        // mengawasi buku orderbook. Jika ada Tembok Raksasa menghalangi jalan, 
-        // bot akan mencuri start dengan menjual tepat di bawah tembok tersebut.
-        // =========================================================================
+        // 🧱 TEMBOK BANDAR FRONT-RUNNING
         if (livePnlPct >= 1.5 && AUTO_TRADE_ENABLED) {
             const depthData = await getOrderbookDepth(p.pair);
             if (depthData && depthData.sell) {
-                // Memindai antrean jual (Ask)
                 for (let i = 0; i < depthData.sell.length; i++) {
                     const askPrice = parseFloat(depthData.sell[i][0]);
                     const askAmt = parseFloat(depthData.sell[i][1]);
-                    const idrVol = askPrice * askAmt; // Total uang yang menghalangi
+                    const idrVol = askPrice * askAmt; 
 
-                    // Syarat mendeteksi tembok: 
-                    // 1. Tembok nilainya lebih dari Rp 100 Juta Rupiah.
-                    // 2. Posisi tembok ada di depan kita (di atas harga sekarang, tapi di bawah target asli kita).
                     if (askPrice > current_bid && askPrice <= virtual_tp && idrVol >= 100000000) {
-                        const frontRunTP = askPrice * 0.995; // Nikung 0.5% lebih murah dari tembok
-                        
-                        // Pastikan walau kita nikung, kita tetap profit minimal 1.5% dari modal awal
+                        const frontRunTP = askPrice * 0.995; // Nikung 0.5%
                         if (frontRunTP > p.entry_price * 1.015) { 
                             virtual_tp = frontRunTP;
                             attention_needed = true;
                             attention_reason = `🧱 TEMBOK BANDAR Rp ${(idrVol / 1000000).toFixed(0)} Juta terdeteksi di Rp ${exactNum(askPrice)}! Bot menikung (Front-Run) TP ke Rp ${exactNum(virtual_tp)}.`;
                             console.log(attention_reason);
-                            break; // Ketemu tembok terdekat, langsung pasang target nikung baru, hentikan pencarian.
+                            break; 
                         }
                     }
                 }
@@ -507,8 +507,25 @@ async function streamWorker() {
 
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
           
-          // SKENARIO A: TAKE PROFIT (MENGGUNAKAN VIRTUAL_TP YANG SUDAH DITIKUNG)
-          if (current_bid >= virtual_tp) {
+          // 🛑 [NEW V4.1] TIME-STOP (Salami Slicing Protection)
+          // Jika koin nyangkut minus lebih dari 4 Jam (tapi belum kena SL) -> Potong!
+          if (holdTimeHours >= 4 && livePnlPct <= -1.0) {
+              isExecutingTrade[`sell_${p.id}`] = true;
+              try {
+                  console.log(`⏱️ TIME STOP TRIGGERED: ${p.pair} nyangkut > 4 Jam. Cut-loss dini di BID ${exactNum(current_bid)}`);
+                  await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
+                  await pool.query("UPDATE portfolio_positions SET status='CLOSED_TIME_STOP', pnl=$1, closed_at=NOW() WHERE id=$2 AND pair=$3", [pnl, p.id, p.pair]);
+                  
+                  activeCooldowns[p.pair] = Date.now() + (2 * 60 * 60 * 1000); 
+              } catch (err) {
+                  console.error(`Gagal Time Stop ${p.pair}:`, err.message);
+              } finally {
+                  delete isExecutingTrade[`sell_${p.id}`];
+              }
+          }
+
+          // 💰 SKENARIO A: TAKE PROFIT (Virtual / Front-Run TP)
+          else if (current_bid >= virtual_tp) {
             if (livePnlPct < 1.5) {
                 console.log(`⏳ Menahan Jual TP untuk ${p.pair}, profit bersih masih di bawah 1.5% (Fee Buffer Aktif)`);
             } else {
@@ -527,20 +544,27 @@ async function streamWorker() {
             }
           }
           
-          // SKENARIO B: STOP LOSS DENGAN EXTREME ANTI-WHIPSAW & REBOUND DETECTION
+          // 🛡️ SKENARIO B: STOP LOSS DENGAN EXTREME ANTI-WHIPSAW & SPREAD GUARD
           else if (current_bid <= p.target_sl) {
              const currentRSI = tickHistory[p.pair] ? calculateRSI(tickHistory[p.pair]) : 50;
-             
              const historyLen = tickHistory[p.pair] ? tickHistory[p.pair].length : 0;
              const isRebounding = historyLen >= 2 && (tickHistory[p.pair][historyLen - 1] > tickHistory[p.pair][historyLen - 2]);
 
-             if ((currentRSI < 42 || isRebounding) && btcChange > -3.0) {
+             // [NEW V4.1] Guard 3: Spread Widening (Antrean Dicabut Bandar)
+             if (liveSpread > 3.0) {
+                 attention_needed = true;
+                 attention_reason = `🛡️ SPREAD GUARD: Jurang orderbook melebar (${liveSpread.toFixed(1)}%). Bandar cabut antrean. Membekukan Cut-Loss!`;
+                 console.log(attention_reason);
+                 if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
+             }
+             // Guard 1: Penyelamatan RSI Diperlebar (42) ATAU Harga Sedang Rebound
+             else if ((currentRSI < 42 || isRebounding) && btcChange > -3.0) {
                  attention_needed = true;
                  attention_reason = `🛡️ ELASTIC SL AKTIF: RSI Oversold (${currentRSI.toFixed(0)}) atau sedang Rebound. Membekukan Cut-Loss!`;
                  console.log(attention_reason);
-                 
                  if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
              } 
+             // Guard 2: Delay Konfirmasi Ekstrem 60 Detik Murni
              else {
                  if (!sl_strikes[p.id]) sl_strikes[p.id] = 1;
                  else sl_strikes[p.id]++;
@@ -643,4 +667,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.0 (ULTIMATE FRONT-RUNNING) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.1 (ULTIMATE HEDGE FUND EDITION) ONLINE - PORT ${PORT}`));
