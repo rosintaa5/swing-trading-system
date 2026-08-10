@@ -267,11 +267,11 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>🛡️ BUKU PINTAR V3.4 (VIRTUAL OCO):</h4>
+                <h4>🛡️ BUKU PINTAR V4.2 (ANTI-MINUS EDITION):</h4>
                 <ul>
                   <li>Bot akan mengunci TP/SL di dalam memorinya (tidak dikirim ke Indodax).</li>
-                  <li>Jika Profit mencapai <strong className="text-green">+2%</strong>, SL akan ditarik otomatis ke titik <strong className="text-white">Break-Even</strong>.</li>
-                  <li>Anda 100% aman dari ancaman rate-limit Indodax.</li>
+                  <li>Jika Profit mencapai <strong className="text-green">+2%</strong>, SL ditarik otomatis ke titik <strong className="text-white">Break-Even</strong>.</li>
+                  <li><strong className="text-red">ATURAN MUTLAK:</strong> Sistem tidak akan pernah melakukan Cut-Loss/Jual jika posisi dalam keadaan MINUS. Mode HODL Tanpa Batas!</li>
                 </ul>
               </div>
             </div>
@@ -286,8 +286,8 @@ export default function Page() {
 
       <header className="main-header">
         <div>
-          <h1>⚡ QUANT ENGINE V3.4: ANTI-WHIPSAW</h1>
-          <p>Sistem Presisi Mutlak, Hard-Cooldown Memory, Anti-FOMO Strikes, dan Virtual Execution</p>
+          <h1>⚡ QUANT ENGINE V4.2: ANTI-MINUS HODL EDITION</h1>
+          <p>Sistem Presisi Mutlak, Hard-Cooldown Memory, Anti-FOMO Strikes, dan Aturan Mutlak DILARANG CUT-LOSS</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
           <span className="dot"></span> {isConnected ? 'LIVE DATA STREAM' : 'OFFLINE SYNC'}
@@ -312,14 +312,14 @@ export default function Page() {
       <div className="control-bar">
         <nav className="tab-nav">
           <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
-          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V3.4 ({displayedCoins.length})</button>
+          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V4.2 ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Pantauan Manual ({data.watchlist.length})</button>
           <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Virtual ({portfolio.length})</button>
         </nav>
 
         {activeTab === "scanner" && (
           <div className="filter-group">
-            <span className="filter-label">Filter V3.4:</span>
+            <span className="filter-label">Filter V4.2:</span>
             <button className={signalFilter === "ALL" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("ALL")}>Semua Koin</button>
             <button className={signalFilter === "BUY_ONLY" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("BUY_ONLY")}>🔥 Lulus Syarat Sniper</button>
           </div>
@@ -330,7 +330,7 @@ export default function Page() {
         <section className="view-section dashboard-grid">
           <div className="dash-col-left">
             <div className="market-health-card">
-              <h3>📊 Rasio Kesehatan Altcoin V3.4</h3>
+              <h3>📊 Rasio Kesehatan Altcoin V4.2</h3>
               <div className="health-status-text">{data.stats.health}</div>
               <div className="health-bar-container">
                 <div className="bull-bar" style={{ width: data.stats.bullPct + '%' }}>{data.stats.bullPct}% Lulus Filter</div>
@@ -340,8 +340,8 @@ export default function Page() {
 
             {urgentPositions.length > 0 ? (
               <div className="alert-summary-board">
-                <h3>🚨 Virtual OCO Log</h3>
-                <p>Status penguncian target Break-Even & Trailing Stop.</p>
+                <h3>🚨 Virtual OCO & Guard Log</h3>
+                <p>Status pergerakan bot, proteksi bandar, dan sistem Anti-Cutloss.</p>
                 <div className="alert-cards-container column-layout">
                   {urgentPositions.map((item: any) => (
                     <div key={`alert-${item.id}`} className={`alert-card ${item.alertType.toLowerCase()}`}>
@@ -355,8 +355,12 @@ export default function Page() {
                           <div className="mini-progress-fill" style={{ width: item.alertProgress + '%' }}></div>
                         </div>
                       )}
-                      <button className="dash-quick-sell-btn" onClick={() => handleSell(item.id, item.pair)} disabled={loadingAction === `sell_${item.id}`}>
-                        {loadingAction === `sell_${item.id}` ? "Menutup Posisi..." : "Instant Kill (Jual Sekarang)"}
+                      <button 
+                        className="dash-quick-sell-btn" 
+                        onClick={() => handleSell(item.id, item.pair)} 
+                        disabled={loadingAction === `sell_${item.id}` || item.pnl_pct < 0}
+                      >
+                        {item.pnl_pct < 0 ? "🔒 Terkunci (Sedang Minus)" : (loadingAction === `sell_${item.id}` ? "Menutup Posisi..." : "Instant Kill (Jual Sekarang)")}
                       </button>
                     </div>
                   ))}
@@ -365,7 +369,7 @@ export default function Page() {
             ) : (
               <div className="market-health-card calm-state">
                 <h3>✅ Pengintaian Bisu Aktif</h3>
-                <p>Belum ada posisi yang mencapai Break-Even Lock atau terkena Trailing Stop.</p>
+                <p>Belum ada posisi yang mencapai Break-Even Lock, Target Profit, atau menabrak Guard Sistem.</p>
               </div>
             )}
           </div>
@@ -373,7 +377,7 @@ export default function Page() {
           <div className="dash-col-right">
             <div className="top-nominations-board">
               <h3>🏆 Sniper Target Teratas</h3>
-              <p>Koin yang lolos seluruh Ceklis Pertahanan V3.4 (VPA, RSI, VWAP).</p>
+              <p>Koin yang lolos seluruh Ceklis Pertahanan V4.2 (Anti Wash-Trading, VPA, RSI, VWAP).</p>
               
               <div className="top-coins-list">
                 {topNominations.map((c: any, index: number) => (
@@ -389,7 +393,7 @@ export default function Page() {
                       </div>
                       <div className="top-info-desc">
                         <p>Micro-RSI: <b>{c.technicals.buying_pressure}</b> | Spread: <b>{c.technicals.volatility.toFixed(2)}%</b></p>
-                        <p className="text-dim">VPA Score: Lulus</p>
+                        <p className="text-dim">VPA Score: Lulus | Wash-Trading: Aman</p>
                       </div>
                       <button className="execute-buy-button small-btn" onClick={() => openBuyModal(c)}>
                         ⚡ Tembak Koin Ini
@@ -398,7 +402,7 @@ export default function Page() {
                   </div>
                 ))}
                 {topNominations.length === 0 && (
-                  <div className="text-dim">Belum ada koin yang lolos filter Sniper V3 saat ini.</div>
+                  <div className="text-dim">Belum ada koin yang lolos filter Sniper V4 saat ini.</div>
                 )}
               </div>
             </div>
@@ -409,7 +413,7 @@ export default function Page() {
       {activeTab === "scanner" && (
         <section className="view-section">
           {displayedCoins.length === 0 ? (
-            <div className="loading-container-box">Sistem V3 sedang memindai VWAP dan VPA. Tidak ada koin yang lulus uji saat ini...</div>
+            <div className="loading-container-box">Sistem V4 sedang memindai VWAP dan VPA. Tidak ada koin yang lulus uji saat ini...</div>
           ) : (
             <div className="cards-responsive-grid">
               {displayedCoins.map((c: any) => (
@@ -452,7 +456,7 @@ export default function Page() {
                   </div>
 
                   <button className="execute-buy-button" onClick={() => openBuyModal(c)} disabled={c.signal === "HOLD"}>
-                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V3.4" : "⚡ Tembak Beli Langsung"}
+                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V4.2" : "⚡ Tembak Beli Langsung"}
                   </button>
                 </div>
               ))}
@@ -483,7 +487,7 @@ export default function Page() {
 
                   <div className="watch-info-board">
                     <div className="info-status-bar">
-                      <span className="info-label">Status V3.4:</span>
+                      <span className="info-label">Status V4.2:</span>
                       <strong className={`status-highlight ${getSignalClass(c.signal)}`}>{c.watch_status}</strong>
                     </div>
                     <ul className="info-bullet-list">
@@ -530,6 +534,7 @@ export default function Page() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                         <h3>{p.pair.replace("_", " / ").toUpperCase()}</h3>
                         {isZeroRisk && <span className="zero-risk-badge">🔒 ZERO RISK LOCK</span>}
+                        {p.pnl_pct < 0 && <span className="zero-risk-badge" style={{ background: '#7f1d1d', color: '#fca5a5', borderColor: '#ef4444' }}>❌ ANTI-CUTLOSS AKTIF</span>}
                       </div>
                       <span className="time-subtext">Entry: {new Date(p.created_at).toLocaleString('id-ID')}</span>
                       <span className="modal-info-subtext">Peluru: Rp {p.initial_capital?.toLocaleString('id-ID') || "0"}</span>
@@ -552,8 +557,12 @@ export default function Page() {
                       </strong>
                     </div>
 
-                    <button className="close-position-btn" onClick={() => handleSell(p.id, p.pair)} disabled={loadingAction === `sell_${p.id}`}>
-                      {loadingAction === `sell_${p.id}` ? "Menembak Jual..." : "Instant Kill (Jual)"}
+                    <button 
+                      className="close-position-btn" 
+                      onClick={() => handleSell(p.id, p.pair)} 
+                      disabled={loadingAction === `sell_${p.id}` || p.pnl_pct < 0}
+                    >
+                      {p.pnl_pct < 0 ? "🔒 Terkunci (Anti-Mines)" : (loadingAction === `sell_${p.id}` ? "Menembak Jual..." : "Instant Kill (Jual)")}
                     </button>
                   </div>
                 );
@@ -758,7 +767,8 @@ export default function Page() {
         .alert-desc-text { font-size: 13px; color: #cbd5e1; font-weight: 600; }
         
         .dash-quick-sell-btn { width: 100%; padding: 8px; border: none; border-radius: 6px; background: rgba(255,255,255,0.1); color: white; font-size: 12px; font-weight: 600; margin-top: 15px; cursor: pointer; transition: 0.2s; }
-        .dash-quick-sell-btn:hover { background: var(--theme-red); }
+        .dash-quick-sell-btn:hover:not(:disabled) { background: var(--theme-red); }
+        .dash-quick-sell-btn:disabled { opacity: 0.5; cursor: not-allowed; background: #3f3f46; color: #a1a1aa; }
 
         .portfolio-global-dashboard { display: flex; gap: 20px; margin-bottom: 25px; flex-wrap: wrap; }
         .dashboard-metric-box { flex: 1; min-width: 250px; background: rgba(59,130,246,0.05); border: 1px solid rgba(59,130,246,0.2); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 8px; }
@@ -789,7 +799,7 @@ export default function Page() {
 
         .close-position-btn { background: var(--theme-red); border: none; color: white; padding: 10px 16px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer; transition: 0.2s; }
         .close-position-btn:hover:not(:disabled) { background: #dc2626; }
-        .close-position-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+        .close-position-btn:disabled { opacity: 0.5; cursor: not-allowed; background: #3f3f46; color: #a1a1aa; }
         
         .loading-container-box, .empty-placeholder { background: var(--bg-card); border: 1px dashed var(--border-color); padding: 40px; text-align: center; border-radius: 12px; color: var(--text-dim); font-size: 13.5px; }
 
