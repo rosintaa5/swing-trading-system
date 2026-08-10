@@ -13,15 +13,15 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V4.1 (ULTIMATE HEDGE FUND EDITION)
-// Diperbarui dengan 4 Pelindung Baru Anti-Bandar:
-// 1. Anti Wash-Trading (Mendeteksi Volume Ping-Pong Palsu)
-// 2. Dynamic Exit Spread Guard (Mencegah Cut-loss saat Orderbook Kosong)
-// 3. Time-Stop Invalidation (Anti Salami-Slicing / Pendarahan Halus 4 Jam)
-// 4. Semua fitur V4.0 (Front-Running Tembok, Rebound, dll) dipertahankan!
+// 🛡️ BUKU PINTAR V4.2 (ANTI-MINUS HODL EDITION)
+// Diperbarui dengan Penahanan Absolut Cut-Loss:
+// 1. DILARANG JUAL MINUS: Auto-Trader dan Manual Sell terkunci rapat jika posisi < 0%.
+// 2. Anti Wash-Trading (Mendeteksi Volume Ping-Pong Palsu)
+// 3. Dynamic Exit Spread Guard (Mencegah Cut-loss saat Orderbook Kosong)
+// 4. Time-Stop Modifikasi: Hanya Take Action jika profit, HODL TANPA BATAS jika rugi.
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
-const CAPITAL_PER_TRADE = 1000000; // Eksekusi Rp 1.000.000 per posisi
+const CAPITAL_PER_TRADE = 20000; // Eksekusi Rp 1.000.000 per posisi
 // =========================================================================
 
 app.use(cors({
@@ -85,7 +85,7 @@ async function initDB() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("✅ Database System & Auto-Migration V4.1 Berhasil Dijalankan!");
+    console.log("✅ Database System & Auto-Migration V4.2 Berhasil Dijalankan!");
   } catch (err) {
     console.error("❌ Gagal Menginisialisasi Database:", err.message);
   }
@@ -102,7 +102,7 @@ let isExecutingTrade = {};
 let activeCooldowns = {}; 
 let buy_strikes = {};     
 
-// Cache Orderbook Depth (V4.0)
+// Cache Orderbook Depth
 let depthCache = {}; 
 
 let latestMarketData = {
@@ -279,7 +279,6 @@ function analyzeCoin(t, pairName, btcChange) {
   const prevAsk = prevDataCache[pairName]?.ask || askPrice;
   const vpa = (vol - prevVol) * (askPrice - prevAsk);
   
-  // [NEW V4.1] Anti Wash-Trading Filter
   const tickVolChange = vol - prevVol;
   const tickPriceChange = prevAsk > 0 ? (Math.abs(askPrice - prevAsk) / prevAsk) * 100 : 0;
   
@@ -292,7 +291,6 @@ function analyzeCoin(t, pairName, btcChange) {
   let rejectReason = null;
   const maxRoomToBreathe = low + (0.8 * dailyRange);
 
-  // [FIX V4.1] Tambahan Logika Wash-Trading Rejection
   if (btcChange < -3.0) rejectReason = "Ditolak: Terkena Badai BTC (-3% Drop)";
   else if (vol < 2000000000) rejectReason = "Ditolak: Koin Sepi (Vol < 2M IDR)";
   else if (spread > 1.5) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`;
@@ -326,7 +324,7 @@ function analyzeCoin(t, pairName, btcChange) {
 
   if (!rejectReason) {
      signal = "🔥 WHALE SNIPER"; 
-     news_headline = "🎯 V4.1 ULTIMATE TERPENUHI! Lolos Filter Wash-Trading. Paus terdeteksi mengakumulasi koin ini!";
+     news_headline = "🎯 V4.2 ULTIMATE TERPENUHI! Lolos Filter Wash-Trading. Paus terdeteksi mengakumulasi koin ini!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -381,12 +379,18 @@ app.post("/sell", async (req, res) => {
     const p = position.rows[0];
     const t = cache.tickers[p.pair];
     
-    await executeIndodaxTrade(p.pair, 'sell', parseFloat(t.buy || t.last), p.amount);
+    // [V4.2 ANTI-CUTLOSS MUTLAK PADA MANUAL SELL]
+    const current_bid = parseFloat(t.buy || t.last);
+    if (current_bid < p.entry_price) {
+        throw new Error("Sistem Anti-Cutloss Aktif: Dilarang keras melakukan penjualan manual saat kondisi rugi (mines). HODL!");
+    }
+    
+    await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
     await pool.query("UPDATE portfolio_positions SET status='CLOSED_MANUAL', closed_at=NOW() WHERE id=$1 AND pair=$2", [id, p.pair]);
     
     activeCooldowns[p.pair] = Date.now() + (2 * 60 * 60 * 1000); 
 
-    res.json({ success: true, message: "Manual Kill Sukses." });
+    res.json({ success: true, message: "Manual Kill Sukses (Profit)." });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -477,7 +481,7 @@ async function streamWorker() {
            }
         } else if (livePnlPct < 0) {
            attention_needed = true;
-           attention_reason = "⚠️ Menahan guncangan harga. Menunggu momentum pantulan.";
+           attention_reason = "⚠️ Menahan guncangan harga. MODE ANTI-CUTLOSS (HODL) AKTIF.";
         }
 
         // 🧱 TEMBOK BANDAR FRONT-RUNNING
@@ -507,21 +511,11 @@ async function streamWorker() {
 
         if (AUTO_TRADE_ENABLED && !isExecutingTrade[`sell_${p.id}`]) {
           
-          // 🛑 [NEW V4.1] TIME-STOP (Salami Slicing Protection)
-          // Jika koin nyangkut minus lebih dari 4 Jam (tapi belum kena SL) -> Potong!
-          if (holdTimeHours >= 4 && livePnlPct <= -1.0) {
-              isExecutingTrade[`sell_${p.id}`] = true;
-              try {
-                  console.log(`⏱️ TIME STOP TRIGGERED: ${p.pair} nyangkut > 4 Jam. Cut-loss dini di BID ${exactNum(current_bid)}`);
-                  await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
-                  await pool.query("UPDATE portfolio_positions SET status='CLOSED_TIME_STOP', pnl=$1, closed_at=NOW() WHERE id=$2 AND pair=$3", [pnl, p.id, p.pair]);
-                  
-                  activeCooldowns[p.pair] = Date.now() + (2 * 60 * 60 * 1000); 
-              } catch (err) {
-                  console.error(`Gagal Time Stop ${p.pair}:`, err.message);
-              } finally {
-                  delete isExecutingTrade[`sell_${p.id}`];
-              }
+          // 🛑 [V4.2 ANTI-CUTLOSS MUTLAK] TIME-STOP
+          // Jika koin nyangkut minus lebih dari 4 Jam, kita BLOKIR cut-loss-nya. HODL tanpa batas.
+          if (holdTimeHours >= 4 && livePnlPct < 0) {
+              attention_needed = true;
+              attention_reason = `⏱️ Koin nyangkut > 4 Jam. ANTI-MINUS AKTIF: Sistem menolak Cut-Loss. Terus menahan (HODL) sampai mantul profit!`;
           }
 
           // 💰 SKENARIO A: TAKE PROFIT (Virtual / Front-Run TP)
@@ -544,55 +538,59 @@ async function streamWorker() {
             }
           }
           
-          // 🛡️ SKENARIO B: STOP LOSS DENGAN EXTREME ANTI-WHIPSAW & SPREAD GUARD
+          // 🛡️ SKENARIO B: STOP LOSS [DIMODIFIKASI V4.2 MENJADI ANTI-MINUS]
           else if (current_bid <= p.target_sl) {
-             const currentRSI = tickHistory[p.pair] ? calculateRSI(tickHistory[p.pair]) : 50;
-             const historyLen = tickHistory[p.pair] ? tickHistory[p.pair].length : 0;
-             const isRebounding = historyLen >= 2 && (tickHistory[p.pair][historyLen - 1] > tickHistory[p.pair][historyLen - 2]);
-
-             // [NEW V4.1] Guard 3: Spread Widening (Antrean Dicabut Bandar)
-             if (liveSpread > 3.0) {
+             
+             // Aturan Mutlak: JIKA MINUS, JANGAN JUAL!
+             if (livePnlPct < 0) {
                  attention_needed = true;
-                 attention_reason = `🛡️ SPREAD GUARD: Jurang orderbook melebar (${liveSpread.toFixed(1)}%). Bandar cabut antrean. Membekukan Cut-Loss!`;
-                 console.log(attention_reason);
-                 if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
-             }
-             // Guard 1: Penyelamatan RSI Diperlebar (42) ATAU Harga Sedang Rebound
-             else if ((currentRSI < 42 || isRebounding) && btcChange > -3.0) {
-                 attention_needed = true;
-                 attention_reason = `🛡️ ELASTIC SL AKTIF: RSI Oversold (${currentRSI.toFixed(0)}) atau sedang Rebound. Membekukan Cut-Loss!`;
-                 console.log(attention_reason);
-                 if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
+                 attention_reason = `🛡️ ANTI-CUTLOSS GUARD: Harga menyentuh batas SL awal, tapi dilarang keras menjual rugi (mines). Mode HODL Tanpa Batas Aktif!`;
+                 if (sl_strikes[p.id]) delete sl_strikes[p.id]; 
              } 
-             // Guard 2: Delay Konfirmasi Ekstrem 60 Detik Murni
+             // Jika harga <= target_sl TETAPI livePnlPct >= 0 (Artinya ini adalah SL Trailing Stop yg sudah di area profit)
              else {
-                 if (!sl_strikes[p.id]) sl_strikes[p.id] = 1;
-                 else sl_strikes[p.id]++;
+                 const currentRSI = tickHistory[p.pair] ? calculateRSI(tickHistory[p.pair]) : 50;
+                 const historyLen = tickHistory[p.pair] ? tickHistory[p.pair].length : 0;
+                 const isRebounding = historyLen >= 2 && (tickHistory[p.pair][historyLen - 1] > tickHistory[p.pair][historyLen - 2]);
 
-                 if (sl_strikes[p.id] >= 12) { 
-                     isExecutingTrade[`sell_${p.id}`] = true;
-                     try {
-                         console.log(`❌ SL CONFIRMED: ${p.pair} tetap di bawah SL selama 1 menit. Whipsaw Guard dilewati. Eksekusi Cut Loss di BID ${exactNum(current_bid)}`);
-                         await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
-                         await pool.query("UPDATE portfolio_positions SET status='CLOSED_SL', pnl=$1, closed_at=NOW() WHERE id=$2 AND pair=$3", [pnl, p.id, p.pair]);
-                         
-                         activeCooldowns[p.pair] = Date.now() + (2 * 60 * 60 * 1000); 
-                     } catch (err) {
-                         console.error(`Gagal Instant Kill SL ${p.pair}:`, err.message);
-                     } finally {
-                         delete isExecutingTrade[`sell_${p.id}`];
-                         delete sl_strikes[p.id];
-                     }
-                 } else {
+                 if (liveSpread > 3.0) {
                      attention_needed = true;
-                     attention_reason = `⚠️ Peringatan SL Strike ${sl_strikes[p.id]}/12: Menganalisa 60 detik untuk memastikan bukan Jarum Bandar...`;
-                     console.log(attention_reason);
+                     attention_reason = `🛡️ SPREAD GUARD: Jurang orderbook melebar (${liveSpread.toFixed(1)}%). Bandar cabut antrean. Membekukan Eksekusi Trailing SL!`;
+                     if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
+                 }
+                 else if ((currentRSI < 42 || isRebounding) && btcChange > -3.0) {
+                     attention_needed = true;
+                     attention_reason = `🛡️ ELASTIC SL AKTIF: RSI Oversold (${currentRSI.toFixed(0)}) atau sedang Rebound. Membekukan Eksekusi Trailing SL!`;
+                     if (sl_strikes[p.id] && sl_strikes[p.id] > 0) sl_strikes[p.id]--; 
+                 } 
+                 else {
+                     if (!sl_strikes[p.id]) sl_strikes[p.id] = 1;
+                     else sl_strikes[p.id]++;
+
+                     if (sl_strikes[p.id] >= 12) { 
+                         isExecutingTrade[`sell_${p.id}`] = true;
+                         try {
+                             console.log(`✅ TRAILING SL CONFIRMED: Eksekusi pengamanan Profit (Bukan Cut Loss) di BID ${exactNum(current_bid)}`);
+                             await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
+                             await pool.query("UPDATE portfolio_positions SET status='CLOSED_SL_PROFIT', pnl=$1, closed_at=NOW() WHERE id=$2 AND pair=$3", [pnl, p.id, p.pair]);
+                             
+                             activeCooldowns[p.pair] = Date.now() + (2 * 60 * 60 * 1000); 
+                         } catch (err) {
+                             console.error(`Gagal Instant Kill Trailing SL ${p.pair}:`, err.message);
+                         } finally {
+                             delete isExecutingTrade[`sell_${p.id}`];
+                             delete sl_strikes[p.id];
+                         }
+                     } else {
+                         attention_needed = true;
+                         attention_reason = `⚠️ Peringatan Eksekusi Profit (Trailing) ${sl_strikes[p.id]}/12: Menganalisa 60 detik memastikan bukan Jarum Bandar...`;
+                     }
                  }
              }
           } 
           else {
               if (sl_strikes[p.id]) {
-                  console.log(`✅ ${p.pair} lolos dari gocekan! Harga kembali naik di atas SL. Strike direset.`);
+                  console.log(`✅ ${p.pair} lolos dari gocekan! Harga kembali naik. Strike direset.`);
                   delete sl_strikes[p.id];
               }
           }
@@ -667,4 +665,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.1 (ULTIMATE HEDGE FUND EDITION) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.2 (ANTI-MINUS HODL EDITION) ONLINE - PORT ${PORT}`));
