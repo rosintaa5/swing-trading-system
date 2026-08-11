@@ -267,9 +267,9 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>🛡️ BUKU PINTAR V4.3 (ANTI-MINUS EDITION):</h4>
+                <h4>🛡️ BUKU PINTAR V4.3 (BALANCED HODL EDITION):</h4>
                 <ul>
-                  <li>Bot akan mengunci TP/SL di dalam memorinya (tidak dikirim ke Indodax).</li>
+                  <li>Mewajibkan Spread di bawah 2.5% agar tidak langsung menanggung rugi bandar.</li>
                   <li>Jika Profit mencapai <strong className="text-green">+2%</strong>, SL ditarik otomatis ke titik <strong className="text-white">Break-Even</strong>.</li>
                   <li><strong className="text-red">ATURAN MUTLAK:</strong> Sistem tidak akan pernah melakukan Cut-Loss/Jual jika posisi dalam keadaan MINUS. Mode HODL Tanpa Batas!</li>
                 </ul>
@@ -286,8 +286,8 @@ export default function Page() {
 
       <header className="main-header">
         <div>
-          <h1>⚡ QUANT ENGINE V4.3: ANTI-MINUS HODL EDITION</h1>
-          <p>Sistem Presisi Mutlak, Hard-Cooldown Memory, Anti-FOMO Strikes, dan Aturan Mutlak DILARANG CUT-LOSS</p>
+          <h1>⚡ QUANT ENGINE V4.3: BALANCED HODL EDITION</h1>
+          <p>Spread Aman (2.5%), Anti-Fake Pump (2 Strikes), dan Aturan Mutlak DILARANG CUT-LOSS</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
           <span className="dot"></span> {isConnected ? 'LIVE DATA STREAM' : 'OFFLINE SYNC'}
@@ -493,7 +493,7 @@ export default function Page() {
                     <ul className="info-bullet-list">
                       <li><b>Diagnosa Bot:</b> {c.news_headline}</li>
                       <li><b>Jarak Antrean (Spread):</b> {c.technicals.volatility.toFixed(2)}%</li>
-                      <li><b>Kekuatan RSI 5 Menit:</b> {c.technicals.buying_pressure} (Wajib 25-90)</li>
+                      <li><b>Kekuatan RSI 5 Menit:</b> {c.technicals.buying_pressure} (Wajib 30-85)</li>
                     </ul>
                   </div>
 
