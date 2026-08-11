@@ -13,10 +13,10 @@ const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || "https://crypto-sintaa.vercel.app";
 
 // =========================================================================
-// 🛡️ BUKU PINTAR V4.2.1 (ANTI-MINUS + AGRESSIVE SNIPER MODE)
+// 🛡️ BUKU PINTAR V4.3 (ANTI-MINUS + TRUE AGRESSIVE SNIPER MODE)
 // 1. DILARANG JUAL MINUS: Auto-Trader dan Manual Sell terkunci rapat jika posisi < 0%.
-// 2. Filter Diturunkan: Agresif mencari mangsa untuk modal Rp 20.000
-// 3. Deteksi Saldo Real-Time: Memberikan log error jika Saldo/API bermasalah
+// 2. Filter Sangat Dilonggarkan: Instant Strike (1x klik) mencari mangsa untuk modal Rp 20.000
+// 3. FIX BUG VPA: Mencegah penolakan koin yang stagnan sesaat (0 VPA)
 // =========================================================================
 const AUTO_TRADE_ENABLED = true;
 const CAPITAL_PER_TRADE = 20000; // Eksekusi Rp 20.000 per posisi
@@ -286,24 +286,24 @@ function analyzeCoin(t, pairName, btcChange) {
   if (dailyRange <= 0) dailyRange = price * 0.05;
 
   let rejectReason = null;
-  const maxRoomToBreathe = low + (0.85 * dailyRange); // Sedikit dilonggarkan agar tidak FOMO terlalu cepat, tapi lebih pemaaf
+  const maxRoomToBreathe = low + (0.90 * dailyRange); // V4.3: Lebih dilonggarkan agar berani ambil pucuk wajar
 
-  // FILTER DILONGGARKAN AGAR BOT LEBIH SERING TRADING
+  // FILTER V4.3 SANGAT DILONGGARKAN (PERBAIKAN OPEN POSISI)
   if (btcChange < -4.0) rejectReason = "Ditolak: Terkena Badai BTC (-4% Drop)";
-  else if (vol < 500000000) rejectReason = "Ditolak: Koin Sepi (Vol < 500 Juta IDR)"; // Diturunkan dari 2 Miliar
-  else if (spread > 2.5) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`; // Dilonggarkan dari 1.5%
-  else if (askPrice < vwap) rejectReason = "Ditolak: Harga di Bawah Rata-Rata (VWAP)";
-  else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO";
-  else if (microRsi < 35 || microRsi > 85) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`; // Diperlebar
-  else if (vpa <= 0) rejectReason = "Ditolak: VPA Negatif (Distribusi)";
-  // Wash trading guard dilonggarkan
+  else if (vol < 200000000) rejectReason = "Ditolak: Koin Sepi (Vol < 200 Juta IDR)"; // Diturunkan drastis
+  else if (spread > 4.0) rejectReason = `Ditolak: Spread Lebar (${spread.toFixed(2)}%)`; // Toleransi mekar orderbook
+  else if (askPrice < (vwap * 0.95)) rejectReason = "Ditolak: Harga Terlalu Anjlok dari VWAP"; // Toleransi turun sedikit
+  else if (askPrice > maxRoomToBreathe) rejectReason = "Ditolak: Koin Berada di Pucuk / FOMO Ekstrem";
+  else if (microRsi < 25 || microRsi > 90) rejectReason = `Ditolak: Micro-RSI Tidak Sehat (${microRsi.toFixed(1)})`; // Lebar bebas
+  else if (vpa < 0) rejectReason = "Ditolak: VPA Negatif (Distribusi/Buang Barang)"; // FIX BUG: Sebelumnya <= 0 membuat bot mogok jika koin stagnan 5 detik
+  // Wash trading guard
   else if (tickVolChange > 500000000 && tickPriceChange < 0.02) rejectReason = "Ditolak: Indikasi Wash-Trading Tinggi";
 
   const whale_score = Math.min(10, Math.max(0, Math.log10(vol + 1) - 4));
   const momentum_score = Math.min(10, Math.max(0, (change * 2) + 5));
   let score = (whale_score * 2) + momentum_score;
   
-  let base_tp_pct = 0.04; // TP lebih cepat agar putaran 20rb lebih cepat
+  let base_tp_pct = 0.04; 
   let base_sl_pct = 0.08; 
   
   if (btcChange >= 2.0) {
@@ -323,7 +323,7 @@ function analyzeCoin(t, pairName, btcChange) {
 
   if (!rejectReason) {
      signal = "🔥 WHALE SNIPER"; 
-     news_headline = "🎯 AGRESSIVE MODE TERPENUHI! Koin terdeteksi sangat berpotensi. Bersiap Tembak!";
+     news_headline = "🎯 AGRESSIVE MODE V4.3 TERPENUHI! Filter bersih. Bersiap Tembak!";
      watch_status = "SIAP DITEMBAK";
   }
 
@@ -463,7 +463,7 @@ async function streamWorker() {
         let virtual_sl = p.target_sl;
         let virtual_tp = p.target_tp; 
         
-        if (livePnlPct >= 3.5) { // Dipercepat Trailing-nya
+        if (livePnlPct >= 3.5) { 
            const breakEvenLock = p.entry_price * 1.015; 
            const trailingStop = current_bid * 0.96; 
            
@@ -521,7 +521,7 @@ async function streamWorker() {
                   await executeIndodaxTrade(p.pair, 'sell', current_bid, p.amount);
                   await pool.query("UPDATE portfolio_positions SET status='CLOSED_TP', pnl=$1, closed_at=NOW() WHERE id=$2 AND pair=$3", [pnl, p.id, p.pair]);
                   
-                  activeCooldowns[p.pair] = Date.now() + (1 * 60 * 60 * 1000); // Cooldown dipersingkat 1 Jam
+                  activeCooldowns[p.pair] = Date.now() + (1 * 60 * 60 * 1000); 
                 } catch (err) {
                   console.error(`Gagal Instant Kill TP ${p.pair}:`, err.message);
                 } finally {
@@ -587,7 +587,7 @@ async function streamWorker() {
     }
 
     // =========================================================================
-    // LOGIKA PEMBELIAN AGRESSIVE MODE (HANYA BUTUH 2 STRIKE)
+    // LOGIKA PEMBELIAN AGRESSIVE MODE V4.3 (INSTANT 1 STRIKE KILL)
     // =========================================================================
     if (AUTO_TRADE_ENABLED) {
       const activePairs = openPositions.rows.map(p => p.pair);
@@ -596,7 +596,7 @@ async function streamWorker() {
       
       const bestCoin = top.find(r => 
         r.signal === "🔥 WHALE SNIPER" && 
-        buy_strikes[r.pair] >= 2 &&  // DITURUNKAN DARI 3 KE 2 AGAR LEBIH CEPAT NEMBAK
+        buy_strikes[r.pair] >= 1 &&  // DITURUNKAN KE 1 STRIKE: Langsung sikat begitu momen tepat!
         !activePairs.includes(r.pair) && 
         !cooldownPairs.includes(r.pair) && 
         (!activeCooldowns[r.pair] || activeCooldowns[r.pair] <= Date.now()) && 
@@ -666,4 +666,4 @@ io.on("connection", (socket) => {
   socket.emit("market_data", latestMarketData);
 });
 
-server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.2.1 (AGRESSIVE & ANTI-MINUS EDITION) ONLINE - PORT ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 QUANT ENGINE V4.3 (AGRESSIVE & ANTI-MINUS EDITION) ONLINE - PORT ${PORT}`));
