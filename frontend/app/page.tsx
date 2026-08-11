@@ -267,7 +267,7 @@ export default function Page() {
               </div>
 
               <div className="modal-info-panel">
-                <h4>🛡️ BUKU PINTAR V4.2 (ANTI-MINUS EDITION):</h4>
+                <h4>🛡️ BUKU PINTAR V4.3 (ANTI-MINUS EDITION):</h4>
                 <ul>
                   <li>Bot akan mengunci TP/SL di dalam memorinya (tidak dikirim ke Indodax).</li>
                   <li>Jika Profit mencapai <strong className="text-green">+2%</strong>, SL ditarik otomatis ke titik <strong className="text-white">Break-Even</strong>.</li>
@@ -286,7 +286,7 @@ export default function Page() {
 
       <header className="main-header">
         <div>
-          <h1>⚡ QUANT ENGINE V4.2: ANTI-MINUS HODL EDITION</h1>
+          <h1>⚡ QUANT ENGINE V4.3: ANTI-MINUS HODL EDITION</h1>
           <p>Sistem Presisi Mutlak, Hard-Cooldown Memory, Anti-FOMO Strikes, dan Aturan Mutlak DILARANG CUT-LOSS</p>
         </div>
         <div className={`status-badge ${isConnected ? 'active' : 'inactive'}`}>
@@ -312,14 +312,14 @@ export default function Page() {
       <div className="control-bar">
         <nav className="tab-nav">
           <button className={activeTab === "dashboard" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("dashboard")}>🌟 Pusat Intelijen</button>
-          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V4.2 ({displayedCoins.length})</button>
+          <button className={activeTab === "scanner" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("scanner")}>📡 Radar V4.3 ({displayedCoins.length})</button>
           <button className={activeTab === "watchlist" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("watchlist")}>👁️ Pantauan Manual ({data.watchlist.length})</button>
           <button className={activeTab === "portfolio" ? "nav-link active" : "nav-link"} onClick={() => setActiveTab("portfolio")}>💼 Posisi Virtual ({portfolio.length})</button>
         </nav>
 
         {activeTab === "scanner" && (
           <div className="filter-group">
-            <span className="filter-label">Filter V4.2:</span>
+            <span className="filter-label">Filter V4.3:</span>
             <button className={signalFilter === "ALL" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("ALL")}>Semua Koin</button>
             <button className={signalFilter === "BUY_ONLY" ? "filter-btn active" : "filter-btn"} onClick={() => setSignalFilter("BUY_ONLY")}>🔥 Lulus Syarat Sniper</button>
           </div>
@@ -330,7 +330,7 @@ export default function Page() {
         <section className="view-section dashboard-grid">
           <div className="dash-col-left">
             <div className="market-health-card">
-              <h3>📊 Rasio Kesehatan Altcoin V4.2</h3>
+              <h3>📊 Rasio Kesehatan Altcoin V4.3</h3>
               <div className="health-status-text">{data.stats.health}</div>
               <div className="health-bar-container">
                 <div className="bull-bar" style={{ width: data.stats.bullPct + '%' }}>{data.stats.bullPct}% Lulus Filter</div>
@@ -377,7 +377,7 @@ export default function Page() {
           <div className="dash-col-right">
             <div className="top-nominations-board">
               <h3>🏆 Sniper Target Teratas</h3>
-              <p>Koin yang lolos seluruh Ceklis Pertahanan V4.2 (Anti Wash-Trading, VPA, RSI, VWAP).</p>
+              <p>Koin yang lolos seluruh Ceklis Pertahanan V4.3 (Anti Wash-Trading, VPA, RSI, VWAP).</p>
               
               <div className="top-coins-list">
                 {topNominations.map((c: any, index: number) => (
@@ -446,7 +446,7 @@ export default function Page() {
                     </div>
                     <div className="matrix-cell">
                       <span className="cell-title">🎯 VPA</span>
-                      <strong className={c.technicals.vpa > 0 ? "text-green" : "text-red"}>{c.technicals.vpa > 0 ? "POSITIF" : "NEGATIF"}</strong>
+                      <strong className={c.technicals.vpa >= 0 ? "text-green" : "text-red"}>{c.technicals.vpa >= 0 ? "AMAN" : "DISTRIBUSI"}</strong>
                     </div>
                   </div>
 
@@ -456,7 +456,7 @@ export default function Page() {
                   </div>
 
                   <button className="execute-buy-button" onClick={() => openBuyModal(c)} disabled={c.signal === "HOLD"}>
-                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V4.2" : "⚡ Tembak Beli Langsung"}
+                    {c.signal === "HOLD" ? "Tidak Lulus Ceklis V4.3" : "⚡ Tembak Beli Langsung"}
                   </button>
                 </div>
               ))}
@@ -487,13 +487,13 @@ export default function Page() {
 
                   <div className="watch-info-board">
                     <div className="info-status-bar">
-                      <span className="info-label">Status V4.2:</span>
+                      <span className="info-label">Status V4.3:</span>
                       <strong className={`status-highlight ${getSignalClass(c.signal)}`}>{c.watch_status}</strong>
                     </div>
                     <ul className="info-bullet-list">
                       <li><b>Diagnosa Bot:</b> {c.news_headline}</li>
                       <li><b>Jarak Antrean (Spread):</b> {c.technicals.volatility.toFixed(2)}%</li>
-                      <li><b>Kekuatan RSI 5 Menit:</b> {c.technicals.buying_pressure} (Wajib 45-72)</li>
+                      <li><b>Kekuatan RSI 5 Menit:</b> {c.technicals.buying_pressure} (Wajib 25-90)</li>
                     </ul>
                   </div>
 
